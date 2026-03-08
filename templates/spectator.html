@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spectator - Word Hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body class="game-page" data-view="spectator">
+    <main class="spectator-layout">
+      <header class="topbar">
+        <div class="pill">Live Match</div>
+        <div class="timer" id="timer">1:30</div>
+        <div class="pill" id="status">Waiting</div>
+      </header>
+
+      <section class="scoreboard">
+        <div class="score-card mine">
+          <span>Player 1</span>
+          <strong id="p1-score">0</strong>
+        </div>
+        <div class="score-card theirs">
+          <span>Player 2</span>
+          <strong id="p2-score">0</strong>
+        </div>
+      </section>
+
+      <section class="board-shell">
+        <div id="board" class="board"></div>
+      </section>
+
+      <section class="spectator-words">
+        <article>
+          <h2>Player 1 Words</h2>
+          <div id="p1-words" class="words"></div>
+        </article>
+        <article>
+          <h2>Player 2 Words</h2>
+          <div id="p2-words" class="words"></div>
+        </article>
+      </section>
+
+      <p id="message" class="message" aria-live="polite"></p>
+
+      <div class="actions">
+        <button id="new-match" class="small-button">Start New Match</button>
+        <a class="small-link" href="/play/1">Open Player 1</a>
+        <a class="small-link" href="/play/2">Open Player 2</a>
+      </div>
+    </main>
+
+    <script src="{{ url_for('static', filename='spectator.js') }}"></script>
+  </body>
+</html>

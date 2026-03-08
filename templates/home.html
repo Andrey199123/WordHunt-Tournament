@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Word Hunt Tournament</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body class="home-page">
+    <main class="home-wrap">
+      <h1>Word Hunt</h1>
+      <p class="subhead">90-second head-to-head tournament</p>
+
+      <div class="home-grid">
+        <a class="big-button" href="/play/1">Play As Player 1</a>
+        <a class="big-button" href="/play/2">Play As Player 2</a>
+        <a class="big-button alt" href="/spectate">Spectator View</a>
+      </div>
+
+      <button id="new-match" class="small-button">Start New Match</button>
+      <p id="home-message" class="message" aria-live="polite"></p>
+
+      <section class="rules">
+        <h2>Quick Rules</h2>
+        <ul>
+          <li>Build words by swiping adjacent tiles (including diagonals).</li>
+          <li>No tile can be reused inside a single word.</li>
+          <li>Each player gets 90 seconds on the same board.</li>
+          <li>Points by word length: 3-4=1, 5=2, 6=3, 7=5, 8+=11.</li>
+        </ul>
+      </section>
+    </main>
+
+    <script>
+      const messageEl = document.getElementById("home-message");
+      document.getElementById("new-match").addEventListener("click", async () => {
+        const res = await fetch("/api/new-match", { method: "POST" });
+        const data = await res.json();
+        if (data.ok) {
+          messageEl.textContent = "New match ready. Open Player 1 and Player 2 views.";
+        } else {
+          messageEl.textContent = data.error || "Could not start a new match.";
+        }
+      });
+    </script>
+  </body>
+</html>

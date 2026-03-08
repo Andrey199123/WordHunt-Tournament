@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Player {{ player_id }} - Word Hunt</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body class="game-page" data-player-id="{{ player_id }}" data-view="player">
+    <main class="game-layout">
+      <header class="topbar">
+        <div class="pill">Player {{ player_id }}</div>
+        <div class="timer" id="timer">1:30</div>
+        <div class="pill" id="status">Waiting</div>
+      </header>
+
+      <section class="scoreboard">
+        <div class="score-card mine">
+          <span>You</span>
+          <strong id="my-score">0</strong>
+        </div>
+        <div class="score-card theirs">
+          <span>Opponent</span>
+          <strong id="opp-score">0</strong>
+        </div>
+      </section>
+
+      <section class="board-shell">
+        <div id="board" class="board" aria-label="Word board"></div>
+        <div class="current-word" id="current-word">Swipe tiles to form words</div>
+      </section>
+
+      <section class="word-panel">
+        <h2>Your Words</h2>
+        <div id="words" class="words"></div>
+      </section>
+
+      <p id="message" class="message" aria-live="polite"></p>
+      <a class="small-link" href="/">Back to lobby</a>
+    </main>
+
+    <script src="{{ url_for('static', filename='player.js') }}"></script>
+  </body>
+</html>
