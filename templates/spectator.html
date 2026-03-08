@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;700;800&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@700;800;900&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
@@ -20,29 +20,33 @@
         <div class="pill" id="status">Waiting</div>
       </header>
 
-      <section class="scoreboard">
-        <div class="score-card mine">
-          <span>Player 1</span>
-          <strong id="p1-score">0</strong>
-        </div>
-        <div class="score-card theirs">
-          <span>Player 2</span>
-          <strong id="p2-score">0</strong>
-        </div>
-      </section>
-
-      <section class="board-shell">
-        <div id="board" class="board"></div>
-      </section>
-
-      <section class="spectator-words">
-        <article>
-          <h2>Player 1 Words</h2>
-          <div id="p1-words" class="words"></div>
+      <section class="duel-stage">
+        <article class="spectator-side">
+          <header class="side-head">
+            <div class="pill player-pill">Player 1</div>
+            <strong id="p1-score" class="side-score">0</strong>
+          </header>
+          <section class="board-shell spectator-board-shell">
+            <div id="p1-board" class="board spectator-board"></div>
+          </section>
+          <section class="side-words">
+            <h2>Player 1 Words</h2>
+            <div id="p1-words" class="words"></div>
+          </section>
         </article>
-        <article>
-          <h2>Player 2 Words</h2>
-          <div id="p2-words" class="words"></div>
+
+        <article class="spectator-side">
+          <header class="side-head">
+            <div class="pill player-pill">Player 2</div>
+            <strong id="p2-score" class="side-score">0</strong>
+          </header>
+          <section class="board-shell spectator-board-shell">
+            <div id="p2-board" class="board spectator-board"></div>
+          </section>
+          <section class="side-words">
+            <h2>Player 2 Words</h2>
+            <div id="p2-words" class="words"></div>
+          </section>
         </article>
       </section>
 

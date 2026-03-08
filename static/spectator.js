@@ -1,6 +1,7 @@
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
-const boardEl = document.getElementById("board");
+const p1BoardEl = document.getElementById("p1-board");
+const p2BoardEl = document.getElementById("p2-board");
 const p1ScoreEl = document.getElementById("p1-score");
 const p2ScoreEl = document.getElementById("p2-score");
 const p1WordsEl = document.getElementById("p1-words");
@@ -21,14 +22,14 @@ function formatTime(totalSeconds) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function renderBoard(grid) {
-  boardEl.innerHTML = "";
+function renderBoard(container, grid) {
+  container.innerHTML = "";
   grid.forEach((row) => {
     row.forEach((token) => {
       const tile = document.createElement("div");
       tile.className = "tile";
       tile.textContent = token;
-      boardEl.appendChild(tile);
+      container.appendChild(tile);
     });
   });
 }
@@ -51,7 +52,8 @@ function renderWords(container, words) {
 function applyState(state) {
   if (currentMatchId !== state.id) {
     currentMatchId = state.id;
-    renderBoard(state.board);
+    renderBoard(p1BoardEl, state.board);
+    renderBoard(p2BoardEl, state.board);
     setMessage("New match loaded");
   }
 
