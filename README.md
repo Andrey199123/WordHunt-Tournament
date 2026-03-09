@@ -1,161 +1,136 @@
-# Word Hunt Tournament (Flask + Vercel) - Lesson README
+# Word Hunt Tournament
+### Bytes For Better Lives - Beginner Lesson README
 
-This project is a two-player Word Hunt clone built for live club tournaments.
-It is also a teaching project: the code is intentionally structured so beginner game developers can follow it.
+This project is a 2-player Word Hunt game for your club event.
+It is written to be easy to explain to middle school students.
 
-You get three views:
+Players use these pages:
 
-- `/play/1` for Player 1
-- `/play/2` for Player 2
-- `/spectate` for the live host/spectator screen
+- `/play/1` = Player 1 screen
+- `/play/2` = Player 2 screen
+- `/spectate` = host/live screen
 
-## What This Teaches
+---
 
-- How to model game state on a server
-- How to separate "game rules" from "UI rendering"
-- How to validate player actions fairly on the backend
-- How to keep multiple clients synchronized in real time
-- Why serverless apps need shared storage for multiplayer state
+## What Kids Should Understand First
 
-## Quick Tournament Host Flow
+You can explain the game using this idea:
 
-1. Open `/spectate` on the main display.
+- The **server** is the referee.
+- The **players** are just controllers.
+- The **spectator screen** is the scoreboard and live view.
+
+The referee (server) is in charge of:
+
+- the letters
+- the timer
+- checking if words are real
+- giving points
+- deciding the winner
+
+---
+
+## Super Quick How To Run A Match
+
+1. Open `/spectate`.
 2. Click `Create Match`.
-3. Open Player 1 and Player 2 links from the spectator screen.
-4. Players join automatically.
-5. Click `Start Match` on spectator.
-6. Match runs for 90 seconds.
-7. Winner/tie summary appears when time expires.
+3. Open `/play/1` and `/play/2` on player devices.
+4. Wait for both players to join.
+5. Click `Start Match`.
+6. Players swipe words for 90 seconds.
+7. End screen shows winner (or tie).
 
-## Architecture at a Glance
+---
 
-```mermaid
-flowchart LR
-    P1["Player 1 (/play/1)"] --> API["Flask API (api/index.py)"]
-    P2["Player 2 (/play/2)"] --> API
-    S["Spectator (/spectate)"] --> API
-    API --> R["Upstash Redis (shared match state)"]
-```
+## Where The Important Code Lives
 
-## Project Map
+- `api/index.py`
+  The main game brain (rules, score, timer, match state)
 
-- `api/index.py`: backend game logic, rules, state, API routes
-- `static/player.js`: player input, swipe tracing, polling, word submit
-- `static/spectator.js`: host controls, side-by-side live boards, polling
-- `static/styles.css`: all styling and layout
-- `templates/*.html`: the three page views
-- `data/words.txt`: dictionary used for validation
-- `vercel.json`: Vercel route/build config
+- `static/player.js`
+  Reads finger/mouse swipes, draws swipe lines, sends words to server
 
-## Core Game State Model
+- `static/spectator.js`
+  Host controls, live side-by-side player boards, start/reset buttons
 
-The match state is created in `new_match()` in `api/index.py` and includes:
+- `data/words.txt`
+  Dictionary list of allowed words
 
-- `id`: unique match id
-- `board`: 4x4 letter grid
-- `status`: `waiting`, `running`, or `finished`
-- `start_time`, `duration`, `time_remaining`
-- `players`: join status, score, words found, last points
-- `active_swipes`: live tracing paths/words for spectator visualization
+---
 
-Think of this as the "single source of truth" for the whole game.
+## How One Word Is Processed
 
-## Backend Lesson: Where the Rules Live
+When a player swipes a word:
 
-All actual game rules are backend-enforced in `api/index.py`.
+1. `player.js` sends that word to `POST /api/submit`.
+2. `api/index.py` checks:
+   - Is match running?
+   - Is word in dictionary?
+   - Can this word be made from adjacent tiles?
+   - Did this player already use this word?
+3. If valid, server adds points.
+4. All screens read new score from `GET /api/state`.
 
-### 1. Board Generation
+This is a good lesson:  
+"UI asks, server decides."
 
-- `generate_board()` shuffles classic Boggle dice and picks one face per die.
-- This gives each match a fresh randomized 4x4 board.
+---
 
-### 2. Scoring
+## Scoring Rules Used
 
-- `score_word(word_len)` implements Word Hunt scoring:
-  - 3 letters = 100
-  - 4 = 400
-  - 5 = 800
-  - 6 = 1400
-  - 7 = 1800
-  - 8+ = 2200 + 400 per extra letter
+The backend function `score_word()` gives points:
 
-### 3. Word Validity
+- 3 letters = 100
+- 4 letters = 400
+- 5 letters = 800
+- 6 letters = 1400
+- 7 letters = 1800
+- 8+ letters = 2200 + 400 for each extra letter
 
-- `normalize_word()` removes non-letters and lowercases.
-- Dictionary check uses `WORD_SET` loaded from `data/words.txt`.
-- `word_on_board()` uses DFS to ensure the word can actually be formed from adjacent cells.
-- Duplicate words per player are rejected.
+---
 
-### 4. Match Lifecycle
+## How The Timer Works
 
-- `update_match_status()` flips running -> finished when time hits 0.
-- `winner_info()` computes winner or tie and summary text.
+`start-match` saves a start time.
 
-### 5. API Endpoints
+Then every state update calculates:
 
-- `POST /api/new-match`: reset to a fresh match
-- `POST /api/join`: mark player joined
-- `POST /api/start-match`: start timer if both joined
-- `POST /api/submit`: validate word + award points
-- `POST /api/swipe-update`: store live swipe path for spectator
-- `GET /api/state`: return state snapshot for player or spectator
+- how many seconds passed
+- how many seconds are left
 
-## Frontend Lesson: What the Clients Do
+When time reaches 0:
 
-### Player Client (`static/player.js`)
+- match status becomes `finished`
+- winner (or tie) is calculated
+- final scores and word counts are shown
 
-- Renders board and trace overlay
-- Captures swipe/touch path across adjacent tiles
-- Sends live swipe path to `/api/swipe-update`
-- Sends finished word to `/api/submit`
-- Polls `/api/state` frequently to keep score/timer/status current
+---
 
-Important concept:
+## Why Redis Is Used (Simple Version)
 
-- The player client does input and rendering.
-- The backend decides if a word is valid and whether points are awarded.
+Vercel runs many small server copies.
+If we only saved game data in normal Python memory, one screen might see old data.
 
-### Spectator Client (`static/spectator.js`)
+Redis is shared storage, so all screens see the same match.
 
-- Controls match flow (create/start/reset)
-- Shows both players side-by-side
-- Shows real-time swipe traces and words
-- Polls `/api/state` to stay live
+---
 
-## Why Redis Is Used (Important Multiplayer Lesson)
+## 8-Minute Teaching Script (Middle School Friendly)
 
-Vercel serverless functions do not share Python memory across instances.
-If match state only lives in a global Python variable, clients can desync.
+You can read this almost word-for-word:
 
-So this project stores state in Upstash Redis:
+1. "This file `api/index.py` is our game referee."
+2. "This object stores everything about one match."
+3. "Players swipe letters in `player.js`."
+4. "Words get sent to the referee using `/api/submit`."
+5. "The referee checks if the word is legal."
+6. "If legal, points are added."
+7. "Every screen asks for updates using `/api/state`."
+8. "When timer ends, winner or tie is shown."
 
-- `REDIS_URL` / `KV_URL` for connection
-- one key for match state (`wordhunt:match_state:v1`)
-- one lock key (`wordhunt:match_lock:v1`) to avoid race conditions
+---
 
-This is the most important infrastructure fix for reliable multiplayer behavior.
-
-## End-to-End Example Round
-
-1. Spectator creates a match (`/api/new-match`)
-2. Players open links with the match id and join (`/api/join`)
-3. Spectator starts match (`/api/start-match`)
-4. Player swipes:
-   - live path posted to `/api/swipe-update`
-   - completed word posted to `/api/submit`
-5. Backend validates and updates score
-6. All screens poll `/api/state` and re-render
-7. Timer expires -> backend marks finished -> winner/tie shown
-
-## Tie Handling
-
-Tie logic is implemented in `winner_info()` in `api/index.py`.
-If scores are equal, the result is:
-
-- `winner: "tie"`
-- summary includes both scores and both word counts
-
-## Local Development
+## Local Run
 
 ```bash
 python3 -m venv .venv
@@ -164,39 +139,17 @@ pip install -r requirements.txt
 python api/index.py
 ```
 
-Open `http://127.0.0.1:5000`.
+Open [http://127.0.0.1:5000](http://127.0.0.1:5000)
 
-If you want local Redis behavior too:
+---
 
-```bash
-vercel env pull
-```
+## Deploy
 
-This creates `.env.local` with `REDIS_URL` / `KV_URL`.
-
-## Deploy to Vercel
-
-1. Push this repo to GitHub.
-2. Import project into Vercel.
-3. Add Upstash for Redis integration to the project.
+1. Push to GitHub.
+2. Import repo to Vercel.
+3. Connect Upstash Redis.
 4. Deploy.
 
-This repo already includes `vercel.json`, so no custom build command is needed.
+Project link: [https://github.com/Andrey199123/WordHunt-Tournament](https://github.com/Andrey199123/WordHunt-Tournament)
 
-## Teaching Script (10-Minute Breakdown)
-
-Use this in your meeting:
-
-1. "This object is the whole game state."
-2. "These endpoints are the game loop."
-3. "Frontend only sends intent; backend enforces rules."
-4. "DFS checks if a word can be formed on the board."
-5. "Redis is what makes multiplayer consistent on serverless."
-
-## Extension Ideas for Club Members
-
-- Add rematch history and leaderboard persistence
-- Add ranked best-of-3 mode
-- Add anti-cheat analytics (word speed, impossible traces)
-- Add WebSocket mode instead of polling
-- Add custom board modes (themed dice, larger grids)
+Made by Andrey Vasilyev
