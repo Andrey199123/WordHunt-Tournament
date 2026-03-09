@@ -15,6 +15,8 @@ let isSelecting = false;
 let selectedPath = [];
 let selectedWord = "";
 let activePointerId = null;
+let activeTouchId = null;
+let activeMouseDown = false;
 let running = false;
 
 const pollMs = 800;
@@ -123,52 +125,174 @@ function tileAt(clientX, clientY) {
   return element ? element.closest(".tile") : null;
 }
 
+function startSelectionAtPoint(clientX, clientY) {
+  if (!running) {
+    return false;
+  }
+
+  const tile = tileAt(clientX, clientY);
+  if (!tile) {
+    return false;
+  }
+
+  clearSelection();
+  isSelecting = true;
+  addTileToSelection(tile);
+  return true;
+}
+
+function continueSelectionAtPoint(clientX, clientY) {
+  if (!isSelecting) {
+    return;
+  }
+  addTileToSelection(tileAt(clientX, clientY));
+}
+
+async function finishSelection() {
+  if (!isSelecting) {
+    return;
+  }
+
+  const word = selectedWord;
+  clearSelection();
+
+  if (word.length >= 3 && running) {
+    await submitWord(word);
+  }
+}
+
 function attachBoardInput() {
-  boardEl.addEventListener("pointerdown", (event) => {
-    if (!running) {
+  if (window.PointerEvent) {
+    boardEl.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch") {
+        return;
+      }
+      if (event.button !== undefined && event.button !== 0) {
+        return;
+      }
+
+      if (!startSelectionAtPoint(event.clientX, event.clientY)) {
+        return;
+      }
+
+      activePointerId = event.pointerId;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    });
+
+    document.addEventListener("pointermove", (event) => {
+      if (!isSelecting || activePointerId === null || event.pointerId !== activePointerId) {
+        return;
+      }
+      continueSelectionAtPoint(event.clientX, event.clientY);
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    });
+
+    const onPointerEnd = async (event) => {
+      if (activePointerId === null || event.pointerId !== activePointerId) {
+        return;
+      }
+
+      activePointerId = null;
+      await finishSelection();
+    };
+
+    document.addEventListener("pointerup", onPointerEnd);
+    document.addEventListener("pointercancel", onPointerEnd);
+  }
+
+  boardEl.addEventListener(
+    "touchstart",
+    (event) => {
+      const touch = event.changedTouches[0];
+      if (!touch) {
+        return;
+      }
+      if (!startSelectionAtPoint(touch.clientX, touch.clientY)) {
+        return;
+      }
+
+      activeTouchId = touch.identifier;
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    },
+    { passive: false },
+  );
+
+  boardEl.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!isSelecting || activeTouchId === null) {
+        return;
+      }
+
+      const touch = Array.from(event.touches).find((item) => item.identifier === activeTouchId);
+      if (!touch) {
+        return;
+      }
+
+      continueSelectionAtPoint(touch.clientX, touch.clientY);
+      if (event.cancelable) {
+        event.preventDefault();
+      }
+    },
+    { passive: false },
+  );
+
+  const onTouchEnd = async (event) => {
+    if (activeTouchId === null) {
       return;
     }
 
-    const tile = tileAt(event.clientX, event.clientY);
-    if (!tile) {
+    const isMyTouch = Array.from(event.changedTouches).some(
+      (item) => item.identifier === activeTouchId,
+    );
+    if (!isMyTouch) {
       return;
     }
 
-    isSelecting = true;
-    activePointerId = event.pointerId;
-    boardEl.setPointerCapture(event.pointerId);
-    clearSelection();
-    isSelecting = true;
-    addTileToSelection(tile);
-    event.preventDefault();
-  });
-
-  boardEl.addEventListener("pointermove", (event) => {
-    if (!isSelecting || event.pointerId !== activePointerId) {
-      return;
+    activeTouchId = null;
+    await finishSelection();
+    if (event.cancelable) {
+      event.preventDefault();
     }
-
-    const tile = tileAt(event.clientX, event.clientY);
-    addTileToSelection(tile);
-  });
-
-  const finishSelection = async (event) => {
-    if (!isSelecting || event.pointerId !== activePointerId) {
-      return;
-    }
-
-    isSelecting = false;
-    boardEl.releasePointerCapture(event.pointerId);
-
-    if (selectedWord.length >= 3 && running) {
-      await submitWord(selectedWord);
-    }
-
-    clearSelection();
   };
 
-  boardEl.addEventListener("pointerup", finishSelection);
-  boardEl.addEventListener("pointercancel", finishSelection);
+  document.addEventListener("touchend", onTouchEnd, { passive: false });
+  document.addEventListener("touchcancel", onTouchEnd, { passive: false });
+
+  if (!window.PointerEvent) {
+    boardEl.addEventListener("mousedown", (event) => {
+      if (event.button !== 0) {
+        return;
+      }
+      if (!startSelectionAtPoint(event.clientX, event.clientY)) {
+        return;
+      }
+      activeMouseDown = true;
+      event.preventDefault();
+    });
+
+    document.addEventListener("mousemove", (event) => {
+      if (!activeMouseDown || !isSelecting) {
+        return;
+      }
+      continueSelectionAtPoint(event.clientX, event.clientY);
+      event.preventDefault();
+    });
+
+    document.addEventListener("mouseup", async () => {
+      if (!activeMouseDown) {
+        return;
+      }
+      activeMouseDown = false;
+      await finishSelection();
+    });
+  }
 }
 
 function renderWords(words) {
@@ -203,6 +327,9 @@ function applyState(state) {
   if (state.status === "waiting") {
     statusEl.textContent = "Waiting";
     running = false;
+    if (!isSelecting) {
+      currentWordEl.textContent = "Waiting for live screen to start";
+    }
   } else if (state.status === "running") {
     statusEl.textContent = "Running";
     running = true;

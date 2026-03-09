@@ -7,6 +7,7 @@ const p2ScoreEl = document.getElementById("p2-score");
 const p1WordsEl = document.getElementById("p1-words");
 const p2WordsEl = document.getElementById("p2-words");
 const messageEl = document.getElementById("message");
+const startMatchButton = document.getElementById("start-match");
 const newMatchButton = document.getElementById("new-match");
 
 let currentMatchId = null;
@@ -49,6 +50,37 @@ function renderWords(container, words) {
   });
 }
 
+function updateStartButton(state) {
+  if (state.status === "running") {
+    startMatchButton.disabled = true;
+    startMatchButton.textContent = "Match Running";
+    return;
+  }
+
+  if (state.status === "finished") {
+    startMatchButton.disabled = true;
+    startMatchButton.textContent = "Match Finished";
+    return;
+  }
+
+  if (state.can_start) {
+    startMatchButton.disabled = false;
+    startMatchButton.textContent = "Start Match";
+    return;
+  }
+
+  startMatchButton.disabled = true;
+  const p1Joined = state.players["1"].joined;
+  const p2Joined = state.players["2"].joined;
+  if (!p1Joined && !p2Joined) {
+    startMatchButton.textContent = "Waiting For Players";
+  } else if (!p1Joined) {
+    startMatchButton.textContent = "Waiting For Player 1";
+  } else {
+    startMatchButton.textContent = "Waiting For Player 2";
+  }
+}
+
 function applyState(state) {
   if (currentMatchId !== state.id) {
     currentMatchId = state.id;
@@ -65,6 +97,7 @@ function applyState(state) {
 
   renderWords(p1WordsEl, state.players["1"].words || []);
   renderWords(p2WordsEl, state.players["2"].words || []);
+  updateStartButton(state);
 
   if (state.status === "finished" && state.result) {
     setMessage(state.result.text);
@@ -90,6 +123,18 @@ newMatchButton.addEventListener("click", async () => {
     setMessage(data.error || "Could not start new match", true);
     return;
   }
+  applyState(data.state);
+});
+
+startMatchButton.addEventListener("click", async () => {
+  const res = await fetch("/api/start-match", { method: "POST" });
+  const data = await res.json();
+  if (!data.ok) {
+    setMessage(data.error || "Could not start match", true);
+    await pollState();
+    return;
+  }
+  setMessage("Match started");
   applyState(data.state);
 });
 

@@ -199,6 +199,28 @@ body.game-page {
   color: rgba(216, 228, 245, 0.93);
 }
 
+.home-footer {
+  margin-top: 0.2rem;
+  display: grid;
+  gap: 0.2rem;
+}
+
+.home-repo-link {
+  font-size: 0.8rem;
+  color: rgba(178, 203, 236, 0.84);
+  text-decoration: none;
+}
+
+.home-repo-link:hover {
+  color: rgba(220, 233, 249, 0.96);
+}
+
+.home-credit {
+  margin: 0;
+  font-size: 0.74rem;
+  color: rgba(171, 193, 222, 0.72);
+}
+
 .small-button,
 .small-link {
   border: 0;
@@ -223,6 +245,13 @@ body.game-page {
 .small-link:hover {
   transform: translateY(-1px);
   filter: brightness(1.06);
+}
+
+.small-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
 }
 
 .game-layout,

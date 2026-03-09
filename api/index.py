@@ -60,7 +60,7 @@ def generate_board() -> list[list[str]]:
     letters: list[str] = []
     for die in dice:
         face = random.choice(die)
-        letters.append("Qu" if face == "Q" else face)
+        letters.append(face)
 
     return [letters[i : i + 4] for i in range(0, 16, 4)]
 
@@ -111,13 +111,10 @@ def update_match_status(match: dict) -> None:
         match["status"] = "finished"
 
 
-def maybe_start_match(match: dict) -> None:
+def players_ready_to_start(match: dict) -> bool:
     p1_ready = match["players"]["1"]["joined"]
     p2_ready = match["players"]["2"]["joined"]
-
-    if p1_ready and p2_ready and match["start_time"] is None:
-        match["start_time"] = time.time()
-        match["status"] = "running"
+    return p1_ready and p2_ready
 
 
 def normalize_word(raw_word: str) -> str:
@@ -182,6 +179,7 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
         "status": match["status"],
         "duration": match["duration"],
         "time_remaining": remaining,
+        "can_start": match["status"] == "waiting" and players_ready_to_start(match),
         "players": {
             "1": {
                 "joined": match["players"]["1"]["joined"],
@@ -255,8 +253,26 @@ def api_join():
             return error("Match finished. Start a new match.")
 
         MATCH_STATE["players"][player]["joined"] = True
-        maybe_start_match(MATCH_STATE)
         return jsonify({"ok": True, "state": serialize_state(MATCH_STATE, "player", player)})
+
+
+@app.post("/api/start-match")
+def api_start_match():
+    with STATE_LOCK:
+        update_match_status(MATCH_STATE)
+
+        if MATCH_STATE["status"] == "finished":
+            return error("Match finished. Start a new match.")
+
+        if MATCH_STATE["status"] == "running":
+            return error("Match already running")
+
+        if not players_ready_to_start(MATCH_STATE):
+            return error("Both players must join before starting")
+
+        MATCH_STATE["start_time"] = time.time()
+        MATCH_STATE["status"] = "running"
+        return jsonify({"ok": True, "state": serialize_state(MATCH_STATE, "spectator", None)})
 
 
 @app.post("/api/submit")
