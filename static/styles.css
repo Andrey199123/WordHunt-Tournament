@@ -21,9 +21,10 @@ body {
 
 body.home-page {
   background:
-    radial-gradient(circle at 20% 12%, rgba(213, 255, 176, 0.22), transparent 35%),
-    radial-gradient(circle at 78% 84%, rgba(187, 235, 154, 0.22), transparent 32%),
-    linear-gradient(145deg, #3e7d52, #305f43 55%, #2b523a);
+    radial-gradient(circle at 15% 15%, rgba(30, 124, 187, 0.16), transparent 35%),
+    radial-gradient(circle at 85% 90%, rgba(61, 182, 126, 0.12), transparent 38%),
+    linear-gradient(160deg, #0a1320, #0e1d2f 55%, #0a1626);
+  color: #dbe7f5;
 }
 
 body.game-page {
@@ -41,44 +42,163 @@ body.game-page {
     linear-gradient(140deg, #3d8156, #2f6a47 55%, #2b5e40);
 }
 
-.home-wrap,
+.home-landing,
 .game-layout,
 .spectator-layout {
-  width: min(900px, 94vw);
+  width: min(980px, 94vw);
   margin: 0 auto;
-  padding: 1rem 0 2rem;
+  padding: 1.1rem 0 2rem;
 }
 
-.home-wrap {
+.home-landing {
   display: grid;
-  gap: 1rem;
-  place-items: center;
-  text-align: center;
+  gap: 1.1rem;
 }
 
-h1 {
-  margin: 1rem 0 0;
-  font-size: clamp(2.1rem, 6vw, 3.6rem);
-  font-weight: 900;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #f6fff1;
+.home-hero {
+  max-width: 760px;
+  margin-top: 1.1rem;
 }
 
-.subhead {
+.home-kicker {
   margin: 0;
-  font-size: 1.15rem;
+  font-family: "Manrope", "Nunito Sans", sans-serif;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
   font-weight: 700;
-  color: rgba(246, 255, 241, 0.9);
+  color: rgba(179, 209, 245, 0.78);
 }
 
-.home-grid {
+.home-landing h1 {
+  margin: 0.42rem 0 0;
+  font-family: "Manrope", "Nunito Sans", sans-serif;
+  font-size: clamp(2rem, 5.3vw, 3.4rem);
+  line-height: 1.07;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: #f4f8ff;
+}
+
+.home-copy {
+  max-width: 680px;
+  margin: 0.75rem 0 0;
+  font-family: "Manrope", "Nunito Sans", sans-serif;
+  font-size: clamp(1rem, 2vw, 1.17rem);
+  line-height: 1.5;
+  color: rgba(206, 221, 243, 0.9);
+}
+
+.home-actions {
   display: grid;
-  width: min(560px, 95vw);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.82rem;
+}
+
+.home-action {
+  border-radius: 16px;
+  padding: 1.02rem 1rem;
+  text-decoration: none;
+  background:
+    linear-gradient(170deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    rgba(8, 19, 33, 0.74);
+  border: 1px solid rgba(108, 144, 189, 0.34);
+  color: #ecf4ff;
+  display: grid;
+  gap: 0.3rem;
+  transition: transform 130ms ease, border-color 130ms ease, box-shadow 130ms ease;
+}
+
+.home-action:hover {
+  transform: translateY(-2px);
+  border-color: rgba(131, 172, 221, 0.72);
+  box-shadow: 0 15px 24px rgba(5, 13, 25, 0.48);
+}
+
+.home-action-title {
+  font-family: "Manrope", "Nunito Sans", sans-serif;
+  font-size: 1.08rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.home-action-meta {
+  font-size: 0.89rem;
+  color: rgba(204, 220, 242, 0.82);
+}
+
+.home-action-spectate {
+  border-color: rgba(93, 180, 139, 0.44);
+  background:
+    linear-gradient(170deg, rgba(113, 217, 160, 0.09), rgba(255, 255, 255, 0)),
+    rgba(8, 19, 33, 0.74);
+}
+
+.home-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.home-start {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.74rem 1.2rem;
+  font-family: "Manrope", "Nunito Sans", sans-serif;
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: #f8fdff;
+  background: linear-gradient(135deg, #1e7cbb, #2659bf);
+  box-shadow: 0 9px 20px rgba(8, 30, 59, 0.4);
+  cursor: pointer;
+}
+
+.home-start:hover {
+  filter: brightness(1.08);
+}
+
+.home-message {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.93rem;
+  color: rgba(203, 219, 240, 0.92);
+}
+
+.home-panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.8rem;
 }
 
-.big-button,
+.home-panel {
+  border-radius: 16px;
+  padding: 0.9rem 0.95rem;
+  background: rgba(8, 19, 33, 0.62);
+  border: 1px solid rgba(108, 144, 189, 0.25);
+}
+
+.home-panel h2 {
+  margin: 0;
+  font-family: "Manrope", "Nunito Sans", sans-serif;
+  font-size: 0.92rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: rgba(187, 208, 236, 0.84);
+}
+
+.home-panel ul {
+  margin: 0.52rem 0 0;
+  padding-left: 1.05rem;
+  display: grid;
+  gap: 0.42rem;
+  font-size: 0.91rem;
+  color: rgba(216, 228, 245, 0.93);
+}
+
 .small-button,
 .small-link {
   border: 0;
@@ -95,36 +215,14 @@ h1 {
   cursor: pointer;
 }
 
-.big-button.alt,
 .small-link {
   background: linear-gradient(135deg, #57a2f0, #3274bc);
 }
 
-.big-button:hover,
 .small-button:hover,
 .small-link:hover {
   transform: translateY(-1px);
   filter: brightness(1.06);
-}
-
-.rules {
-  width: min(640px, 96vw);
-  text-align: left;
-  border-radius: 22px;
-  padding: 0.9rem 1.2rem;
-  background: rgba(240, 255, 234, 0.2);
-  border: 1px solid rgba(214, 248, 197, 0.34);
-}
-
-.rules h2 {
-  margin: 0 0 0.35rem;
-  color: #f6fff1;
-}
-
-.rules ul {
-  margin: 0;
-  padding-left: 1.2rem;
-  color: #effce6;
 }
 
 .game-layout,
@@ -419,7 +517,34 @@ body[data-view="spectator"] .message {
   display: inline-block;
 }
 
+@media (max-width: 980px) {
+  .home-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 760px) {
+  .home-landing {
+    padding-top: 0.65rem;
+    gap: 0.88rem;
+  }
+
+  .home-actions,
+  .home-panels {
+    grid-template-columns: 1fr;
+  }
+
+  .home-controls {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .home-start {
+    width: 100%;
+    text-align: center;
+  }
+
   .duel-stage {
     grid-template-columns: 1fr;
   }

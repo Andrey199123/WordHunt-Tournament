@@ -7,33 +7,61 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Nunito+Sans:wght@700;800;900&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Nunito+Sans:wght@700;800;900&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
   </head>
   <body class="home-page">
-    <main class="home-wrap">
-      <h1>Word Hunt</h1>
-      <p class="subhead">90-second head-to-head tournament</p>
+    <main class="home-landing">
+      <header class="home-hero">
+        <p class="home-kicker">Game Development Club</p>
+        <h1>Word Hunt Tournament</h1>
+        <p class="home-copy">
+          Multiplayer match mode with separate player screens and a live side-by-side spectator
+          feed.
+        </p>
+      </header>
 
-      <div class="home-grid">
-        <a class="big-button" href="/play/1">Play As Player 1</a>
-        <a class="big-button" href="/play/2">Play As Player 2</a>
-        <a class="big-button alt" href="/spectate">Spectator View</a>
-      </div>
+      <section class="home-actions" aria-label="Select screen">
+        <a class="home-action" href="/play/1">
+          <span class="home-action-title">Player 1 Screen</span>
+          <span class="home-action-meta">Left station gameplay view</span>
+        </a>
+        <a class="home-action" href="/play/2">
+          <span class="home-action-title">Player 2 Screen</span>
+          <span class="home-action-meta">Right station gameplay view</span>
+        </a>
+        <a class="home-action home-action-spectate" href="/spectate">
+          <span class="home-action-title">Spectator Screen</span>
+          <span class="home-action-meta">Dual-board broadcast view</span>
+        </a>
+      </section>
 
-      <button id="new-match" class="small-button">Start New Match</button>
-      <p id="home-message" class="message" aria-live="polite"></p>
+      <section class="home-controls">
+        <button id="new-match" class="home-start">Create New Match</button>
+        <p id="home-message" class="home-message" aria-live="polite"></p>
+      </section>
 
-      <section class="rules">
-        <h2>Quick Rules</h2>
-        <ul>
-          <li>Build words by swiping adjacent tiles (including diagonals).</li>
-          <li>No tile can be reused inside a single word.</li>
-          <li>Each player gets 90 seconds on the same board.</li>
-          <li>Points by word length: 3-4=1, 5=2, 6=3, 7=5, 8+=11.</li>
-        </ul>
+      <section class="home-panels">
+        <article class="home-panel">
+          <h2>Match Rules</h2>
+          <ul>
+            <li>Trace words by swiping adjacent letters, including diagonals.</li>
+            <li>Each tile can only be used once per submitted word.</li>
+            <li>Each player has 90 seconds on the same board.</li>
+            <li>Points: 3-4=1, 5=2, 6=3, 7=5, 8+=11.</li>
+          </ul>
+        </article>
+        <article class="home-panel">
+          <h2>Meeting Flow</h2>
+          <ul>
+            <li>Project spectator view on the main display.</li>
+            <li>Players open only their own screen on separate devices.</li>
+            <li>Start a fresh match before each round.</li>
+            <li>Use the winner plus score spread for final ranking.</li>
+          </ul>
+        </article>
       </section>
     </main>
 
