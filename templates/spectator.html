@@ -24,11 +24,18 @@
         <article class="spectator-side">
           <header class="side-head">
             <div class="pill player-pill">Player 1</div>
-            <strong id="p1-score" class="side-score">0</strong>
+            <div class="side-score-group">
+              <strong id="p1-score" class="side-score">0</strong>
+              <em id="p1-last" class="side-delta">+0</em>
+            </div>
           </header>
           <section class="board-shell spectator-board-shell">
-            <div id="p1-board" class="board spectator-board"></div>
+            <div class="board-stack">
+              <div id="p1-board" class="board spectator-board"></div>
+              <svg id="p1-trace-overlay" class="trace-overlay trace-overlay-p1" aria-hidden="true"></svg>
+            </div>
           </section>
+          <p id="p1-trace-word" class="trace-word">Tracing: -</p>
           <section class="side-words">
             <h2>Player 1 Words</h2>
             <div id="p1-words" class="words"></div>
@@ -38,11 +45,18 @@
         <article class="spectator-side">
           <header class="side-head">
             <div class="pill player-pill">Player 2</div>
-            <strong id="p2-score" class="side-score">0</strong>
+            <div class="side-score-group">
+              <strong id="p2-score" class="side-score">0</strong>
+              <em id="p2-last" class="side-delta">+0</em>
+            </div>
           </header>
           <section class="board-shell spectator-board-shell">
-            <div id="p2-board" class="board spectator-board"></div>
+            <div class="board-stack">
+              <div id="p2-board" class="board spectator-board"></div>
+              <svg id="p2-trace-overlay" class="trace-overlay trace-overlay-p2" aria-hidden="true"></svg>
+            </div>
           </section>
+          <p id="p2-trace-word" class="trace-word">Tracing: -</p>
           <section class="side-words">
             <h2>Player 2 Words</h2>
             <div id="p2-words" class="words"></div>

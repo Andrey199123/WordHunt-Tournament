@@ -24,15 +24,20 @@
         <div class="score-card mine">
           <span>You</span>
           <strong id="my-score">0</strong>
+          <em id="my-last" class="score-delta">+0 last</em>
         </div>
         <div class="score-card theirs">
           <span>Opponent</span>
           <strong id="opp-score">0</strong>
+          <em id="opp-last" class="score-delta">+0 last</em>
         </div>
       </section>
 
       <section class="board-shell">
-        <div id="board" class="board" aria-label="Word board"></div>
+        <div class="board-stack">
+          <div id="board" class="board" aria-label="Word board"></div>
+          <svg id="trace-overlay" class="trace-overlay" aria-hidden="true"></svg>
+        </div>
         <div class="current-word" id="current-word">Swipe tiles to form words</div>
       </section>
 

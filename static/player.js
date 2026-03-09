@@ -3,8 +3,11 @@ const playerId = document.body.dataset.playerId;
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
+const traceOverlayEl = document.getElementById("trace-overlay");
 const myScoreEl = document.getElementById("my-score");
 const oppScoreEl = document.getElementById("opp-score");
+const myLastEl = document.getElementById("my-last");
+const oppLastEl = document.getElementById("opp-last");
 const wordsEl = document.getElementById("words");
 const messageEl = document.getElementById("message");
 const currentWordEl = document.getElementById("current-word");
@@ -18,8 +21,10 @@ let activePointerId = null;
 let activeTouchId = null;
 let activeMouseDown = false;
 let running = false;
+let swipePublishTimer = null;
+let pendingSwipePayload = null;
 
-const pollMs = 800;
+const pollMs = 350;
 
 function setMessage(text, isError = false) {
   messageEl.textContent = text || "";
@@ -61,12 +66,104 @@ function renderBoard(grid) {
   });
 }
 
+function tileCenter(row, col) {
+  const tile = boardEl.querySelector(`.tile[data-row="${row}"][data-col="${col}"]`);
+  if (!tile) {
+    return null;
+  }
+
+  const tileRect = tile.getBoundingClientRect();
+  const boardRect = boardEl.getBoundingClientRect();
+  return {
+    x: tileRect.left - boardRect.left + tileRect.width / 2,
+    y: tileRect.top - boardRect.top + tileRect.height / 2,
+  };
+}
+
+function drawTrace(path) {
+  const boardRect = boardEl.getBoundingClientRect();
+  const width = Math.max(1, Math.round(boardRect.width));
+  const height = Math.max(1, Math.round(boardRect.height));
+  traceOverlayEl.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  traceOverlayEl.setAttribute("width", String(width));
+  traceOverlayEl.setAttribute("height", String(height));
+  traceOverlayEl.innerHTML = "";
+
+  if (!path.length) {
+    return;
+  }
+
+  const points = path.map((cell) => tileCenter(cell.r, cell.c)).filter(Boolean);
+  if (!points.length) {
+    return;
+  }
+
+  if (points.length >= 2) {
+    const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+    polyline.setAttribute(
+      "points",
+      points.map((pt) => `${pt.x},${pt.y}`).join(" "),
+    );
+    polyline.setAttribute("fill", "none");
+    polyline.setAttribute("stroke", "#7fd7ff");
+    polyline.setAttribute("stroke-width", "10");
+    polyline.setAttribute("stroke-linecap", "round");
+    polyline.setAttribute("stroke-linejoin", "round");
+    polyline.setAttribute("opacity", "0.88");
+    traceOverlayEl.appendChild(polyline);
+  }
+
+  points.forEach((pt) => {
+    const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    dot.setAttribute("cx", String(pt.x));
+    dot.setAttribute("cy", String(pt.y));
+    dot.setAttribute("r", "7");
+    dot.setAttribute("fill", "#b8ecff");
+    dot.setAttribute("opacity", "0.96");
+    traceOverlayEl.appendChild(dot);
+  });
+}
+
+function selectionPathPayload() {
+  return selectedPath.map((cell) => [cell.r, cell.c]);
+}
+
+function scheduleSwipePublish(pathPayload, word) {
+  pendingSwipePayload = { path: pathPayload, word };
+  if (swipePublishTimer !== null) {
+    return;
+  }
+
+  swipePublishTimer = window.setTimeout(async () => {
+    swipePublishTimer = null;
+    const payload = pendingSwipePayload;
+    pendingSwipePayload = null;
+    if (!payload) {
+      return;
+    }
+    await publishSwipe(payload.path, payload.word);
+  }, 65);
+}
+
+async function publishSwipe(pathPayload, word) {
+  try {
+    await fetch("/api/swipe-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ player: playerId, path: pathPayload, word }),
+    });
+  } catch {
+    // Ignore transient network misses while tracing.
+  }
+}
+
 function updateSelectionUi() {
   const pathSet = new Set(selectedPath.map((cell) => `${cell.r},${cell.c}`));
   boardEl.querySelectorAll(".tile").forEach((tile) => {
     const key = `${tile.dataset.row},${tile.dataset.col}`;
     tile.classList.toggle("selected", pathSet.has(key));
   });
+  drawTrace(selectedPath);
 
   if (!selectedWord) {
     currentWordEl.textContent = "Swipe tiles to form words";
@@ -80,6 +177,7 @@ function clearSelection() {
   selectedPath = [];
   selectedWord = "";
   updateSelectionUi();
+  scheduleSwipePublish([], "");
 }
 
 function addTileToSelection(tile) {
@@ -100,6 +198,7 @@ function addTileToSelection(tile) {
   selectedPath.push(pos);
   selectedWord += pos.token.toLowerCase();
   updateSelectionUi();
+  scheduleSwipePublish(selectionPathPayload(), selectedWord);
 }
 
 async function submitWord(word) {
@@ -321,7 +420,9 @@ function applyState(state) {
 
   timerEl.textContent = formatTime(state.time_remaining);
   myScoreEl.textContent = String(state.players[playerId].score);
+  myLastEl.textContent = `+${state.players[playerId].last_points || 0} last`;
   oppScoreEl.textContent = String(state.opponent.score);
+  oppLastEl.textContent = `+${state.opponent.last_points || 0} last`;
   renderWords(state.my_words || []);
 
   if (state.status === "waiting") {
@@ -379,6 +480,7 @@ async function pollState() {
 
 async function init() {
   attachBoardInput();
+  window.addEventListener("resize", () => drawTrace(selectedPath));
   const joined = await joinMatch();
   if (!joined) {
     return;

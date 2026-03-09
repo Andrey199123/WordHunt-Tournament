@@ -74,8 +74,12 @@ def new_match() -> dict:
         "duration": 90,
         "status": "waiting",
         "players": {
-            "1": {"joined": False, "score": 0, "words": []},
-            "2": {"joined": False, "score": 0, "words": []},
+            "1": {"joined": False, "score": 0, "words": [], "last_points": 0},
+            "2": {"joined": False, "score": 0, "words": [], "last_points": 0},
+        },
+        "active_swipes": {
+            "1": {"path": [], "word": "", "updated_at": None},
+            "2": {"path": [], "word": "", "updated_at": None},
         },
     }
 
@@ -109,12 +113,53 @@ def update_match_status(match: dict) -> None:
         return
     if time_remaining(match) == 0:
         match["status"] = "finished"
+        match["active_swipes"]["1"] = {"path": [], "word": "", "updated_at": None}
+        match["active_swipes"]["2"] = {"path": [], "word": "", "updated_at": None}
 
 
 def players_ready_to_start(match: dict) -> bool:
     p1_ready = match["players"]["1"]["joined"]
     p2_ready = match["players"]["2"]["joined"]
     return p1_ready and p2_ready
+
+
+def sanitize_path(raw_path) -> list[list[int]]:
+    if not isinstance(raw_path, list):
+        return []
+
+    seen: set[tuple[int, int]] = set()
+    sanitized: list[list[int]] = []
+    for point in raw_path:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            continue
+        try:
+            row = int(point[0])
+            col = int(point[1])
+        except (TypeError, ValueError):
+            continue
+
+        if not (0 <= row < 4 and 0 <= col < 4):
+            continue
+        if (row, col) in seen:
+            continue
+
+        seen.add((row, col))
+        sanitized.append([row, col])
+        if len(sanitized) >= 16:
+            break
+
+    return sanitized
+
+
+def cleanup_stale_swipes(match: dict, stale_after_seconds: float = 1.2) -> None:
+    now = time.time()
+    for player in ("1", "2"):
+        swipe = match["active_swipes"][player]
+        updated_at = swipe.get("updated_at")
+        if not updated_at:
+            continue
+        if now - float(updated_at) > stale_after_seconds:
+            match["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
 
 
 def normalize_word(raw_word: str) -> str:
@@ -172,6 +217,7 @@ def winner_info(match: dict):
 
 
 def serialize_state(match: dict, view: str, player: str | None) -> dict:
+    cleanup_stale_swipes(match)
     remaining = time_remaining(match)
     payload = {
         "id": match["id"],
@@ -185,11 +231,13 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
                 "joined": match["players"]["1"]["joined"],
                 "score": match["players"]["1"]["score"],
                 "word_count": len(match["players"]["1"]["words"]),
+                "last_points": match["players"]["1"]["last_points"],
             },
             "2": {
                 "joined": match["players"]["2"]["joined"],
                 "score": match["players"]["2"]["score"],
                 "word_count": len(match["players"]["2"]["words"]),
+                "last_points": match["players"]["2"]["last_points"],
             },
         },
     }
@@ -197,6 +245,16 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
     if view == "spectator":
         payload["players"]["1"]["words"] = match["players"]["1"]["words"]
         payload["players"]["2"]["words"] = match["players"]["2"]["words"]
+        payload["swipes"] = {
+            "1": {
+                "path": match["active_swipes"]["1"]["path"],
+                "word": match["active_swipes"]["1"]["word"],
+            },
+            "2": {
+                "path": match["active_swipes"]["2"]["path"],
+                "word": match["active_swipes"]["2"]["word"],
+            },
+        }
     elif view == "player" and player in {"1", "2"}:
         opponent = "2" if player == "1" else "1"
         payload["my_words"] = match["players"][player]["words"]
@@ -204,6 +262,7 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
             "id": opponent,
             "score": match["players"][opponent]["score"],
             "word_count": len(match["players"][opponent]["words"]),
+            "last_points": match["players"][opponent]["last_points"],
         }
 
     if match["status"] == "finished":
@@ -309,6 +368,8 @@ def api_submit():
         points = score_word(len(submitted))
         player_state["words"].append(submitted)
         player_state["score"] += points
+        player_state["last_points"] = points
+        MATCH_STATE["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
 
         return jsonify(
             {
@@ -319,6 +380,30 @@ def api_submit():
                 "state": serialize_state(MATCH_STATE, "player", player),
             }
         )
+
+
+@app.post("/api/swipe-update")
+def api_swipe_update():
+    body = request.get_json(silent=True) or {}
+    player = str(body.get("player", ""))
+    if player not in {"1", "2"}:
+        return error("Player must be '1' or '2'")
+
+    with STATE_LOCK:
+        update_match_status(MATCH_STATE)
+
+        if MATCH_STATE["status"] != "running":
+            MATCH_STATE["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
+            return jsonify({"ok": True})
+
+        path = sanitize_path(body.get("path", []))
+        word = normalize_word(str(body.get("word", "")))[:16]
+        MATCH_STATE["active_swipes"][player] = {
+            "path": path,
+            "word": word,
+            "updated_at": time.time(),
+        }
+        return jsonify({"ok": True})
 
 
 @app.get("/api/state")
