@@ -1,7 +1,6 @@
 const playerId = document.body.dataset.playerId;
 const queryMatchId = new URLSearchParams(window.location.search).get("match");
 const matchStorageKey = `wordhunt_player_${playerId}_match_id`;
-const boardStorageKey = `wordhunt_player_${playerId}_board_cache`;
 
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
@@ -14,6 +13,7 @@ const oppLastEl = document.getElementById("opp-last");
 const wordsEl = document.getElementById("words");
 const messageEl = document.getElementById("message");
 const currentWordEl = document.getElementById("current-word");
+const syncButton = document.getElementById("sync-player");
 
 let pinnedMatchId = queryMatchId || localStorage.getItem(matchStorageKey) || null;
 if (queryMatchId) {
@@ -21,8 +21,9 @@ if (queryMatchId) {
 }
 
 let currentMatchId = pinnedMatchId;
-let board = [];
 let boardSignature = "";
+let latestState = null;
+
 let isSelecting = false;
 let selectedPath = [];
 let selectedWord = "";
@@ -30,11 +31,12 @@ let activePointerId = null;
 let activeTouchId = null;
 let activeMouseDown = false;
 let running = false;
+let joinInFlight = false;
+
 let swipePublishTimer = null;
 let pendingSwipePayload = null;
-let mismatchCount = 0;
 
-const pollMs = 350;
+const pollMs = 100;
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -78,22 +80,14 @@ function pinMatch(matchId) {
   localStorage.setItem(matchStorageKey, matchId);
 }
 
+function clearPinnedMatch() {
+  pinnedMatchId = null;
+  currentMatchId = null;
+  localStorage.removeItem(matchStorageKey);
+}
+
 function activeMatchId() {
-  return pinnedMatchId || queryMatchId || null;
-}
-
-function parsePos(tile) {
-  return {
-    r: Number(tile.dataset.row),
-    c: Number(tile.dataset.col),
-    token: tile.dataset.token,
-  };
-}
-
-function isAdjacent(a, b) {
-  const dr = Math.abs(a.r - b.r);
-  const dc = Math.abs(a.c - b.c);
-  return dr <= 1 && dc <= 1 && dr + dc > 0;
+  return pinnedMatchId || null;
 }
 
 function renderBoard(grid) {
@@ -112,6 +106,29 @@ function renderBoard(grid) {
       boardEl.appendChild(tile);
     });
   });
+}
+
+function renderHiddenBoard() {
+  const hidden = blankGrid();
+  const hiddenSignature = gridSignature(hidden);
+  if (boardSignature !== hiddenSignature) {
+    renderBoard(hidden);
+    boardSignature = hiddenSignature;
+  }
+  drawTrace([]);
+}
+
+function renderLiveBoard(grid) {
+  if (!isValidBoard(grid)) {
+    return;
+  }
+
+  const signature = gridSignature(grid);
+  if (boardSignature !== signature) {
+    renderBoard(grid);
+    boardSignature = signature;
+  }
+  drawTrace(selectedPath);
 }
 
 function tileCenter(row, col) {
@@ -172,81 +189,22 @@ function drawTrace(path) {
   });
 }
 
+function parsePos(tile) {
+  return {
+    r: Number(tile.dataset.row),
+    c: Number(tile.dataset.col),
+    token: tile.dataset.token,
+  };
+}
+
+function isAdjacent(a, b) {
+  const dr = Math.abs(a.r - b.r);
+  const dc = Math.abs(a.c - b.c);
+  return dr <= 1 && dc <= 1 && dr + dc > 0;
+}
+
 function selectionPathPayload() {
   return selectedPath.map((cell) => [cell.r, cell.c]);
-}
-
-function persistBoardCache(matchId, grid) {
-  if (!matchId || !isValidBoard(grid)) {
-    return;
-  }
-  localStorage.setItem(
-    boardStorageKey,
-    JSON.stringify({ match_id: matchId, board: grid, saved_at: Date.now() }),
-  );
-}
-
-function restoreBoardCache() {
-  if (!queryMatchId) {
-    renderBoard(blankGrid());
-    drawTrace([]);
-    return;
-  }
-
-  try {
-    const raw = localStorage.getItem(boardStorageKey);
-    if (!raw) {
-      renderBoard(blankGrid());
-      drawTrace([]);
-      return;
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!parsed || !isValidBoard(parsed.board)) {
-      renderBoard(blankGrid());
-      drawTrace([]);
-      return;
-    }
-
-    if (pinnedMatchId && parsed.match_id && pinnedMatchId !== parsed.match_id) {
-      renderBoard(blankGrid());
-      drawTrace([]);
-      return;
-    }
-
-    board = parsed.board;
-    boardSignature = gridSignature(board);
-    renderBoard(board);
-    drawTrace([]);
-    currentWordEl.textContent = "Reconnecting to match...";
-  } catch {
-    renderBoard(blankGrid());
-    drawTrace([]);
-  }
-}
-
-function showHiddenBoard() {
-  const hiddenSig = gridSignature(blankGrid());
-  if (boardSignature !== hiddenSig) {
-    renderBoard(blankGrid());
-    boardSignature = hiddenSig;
-  }
-  drawTrace([]);
-}
-
-function showLiveBoard(grid, matchId) {
-  if (!isValidBoard(grid)) {
-    return;
-  }
-
-  const sig = gridSignature(grid);
-  if (sig !== boardSignature) {
-    board = grid;
-    boardSignature = sig;
-    renderBoard(board);
-  }
-  drawTrace(selectedPath);
-  persistBoardCache(matchId, grid);
 }
 
 function scheduleSwipePublish(pathPayload, word) {
@@ -263,7 +221,7 @@ function scheduleSwipePublish(pathPayload, word) {
       return;
     }
     await publishSwipe(payload.path, payload.word);
-  }, 65);
+  }, 25);
 }
 
 async function publishSwipe(pathPayload, word) {
@@ -280,7 +238,7 @@ async function publishSwipe(pathPayload, word) {
       body: JSON.stringify(body),
     });
   } catch {
-    // Ignore transient network misses while tracing.
+    // Ignore transient misses while tracing.
   }
 }
 
@@ -290,6 +248,7 @@ function updateSelectionUi() {
     const key = `${tile.dataset.row},${tile.dataset.col}`;
     tile.classList.toggle("selected", pathSet.has(key));
   });
+
   drawTrace(selectedPath);
 
   if (!selectedWord) {
@@ -348,14 +307,14 @@ async function submitWord(word) {
 
   if (!data.ok) {
     if (data.error === "Match id mismatch") {
+      setMessage("Out of sync. Tap Sync Player.", true);
       return;
     }
     setMessage(data.error || "Word rejected", true);
     return;
   }
 
-  const points = data.points;
-  setMessage(`+${points} for ${data.word.toUpperCase()}`);
+  setMessage(`+${data.points} for ${data.word.toUpperCase()}`);
   applyState(data.state);
 }
 
@@ -549,6 +508,43 @@ function renderWords(words) {
   });
 }
 
+async function ensureJoined() {
+  if (joinInFlight) {
+    return;
+  }
+
+  joinInFlight = true;
+  try {
+    const body = { player: playerId };
+    const matchId = activeMatchId();
+    if (matchId) {
+      body.match_id = matchId;
+    }
+
+    const res = await fetch("/api/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (data.ok) {
+      pinMatch(data.state.id);
+      applyState(data.state);
+      return;
+    }
+
+    if (data.error === "Match id mismatch") {
+      setMessage("Out of sync. Tap Sync Player.", true);
+      return;
+    }
+
+    setMessage(data.error || "Could not join", true);
+  } finally {
+    joinInFlight = false;
+  }
+}
+
 function applyState(state) {
   if (!state || !state.id) {
     return;
@@ -564,31 +560,36 @@ function applyState(state) {
 
   if (currentMatchId !== state.id) {
     currentMatchId = state.id;
-    clearSelection();
     setMessage("Match synced");
   }
 
+  latestState = state;
+
   timerEl.textContent = formatTime(state.time_remaining);
   myScoreEl.textContent = String(state.players[playerId].score);
-  myLastEl.textContent = `+${state.players[playerId].last_points || 0} last`;
+  myLastEl.textContent = `+${state.players[playerId].last_points || 0} pts`;
   oppScoreEl.textContent = String(state.opponent.score);
-  oppLastEl.textContent = `+${state.opponent.last_points || 0} last`;
+  oppLastEl.textContent = `+${state.opponent.last_points || 0} pts`;
   renderWords(state.my_words || []);
 
   if (state.status === "waiting") {
     statusEl.textContent = "Waiting";
     running = false;
-    showHiddenBoard();
+    renderHiddenBoard();
     currentWordEl.textContent = "Waiting for live screen to start";
     scheduleSwipePublish([], "");
+
+    if (!state.players[playerId].joined) {
+      void ensureJoined();
+    }
     return;
   }
 
   if (state.status === "running") {
     statusEl.textContent = "Running";
     running = true;
-    showLiveBoard(state.board, state.id);
-    if (!isSelecting && !selectedWord) {
+    renderLiveBoard(state.board);
+    if (!isSelecting) {
       currentWordEl.textContent = "Swipe tiles to form words";
     }
     return;
@@ -596,23 +597,25 @@ function applyState(state) {
 
   statusEl.textContent = "Finished";
   running = false;
-  showLiveBoard(state.board, state.id);
+  renderLiveBoard(state.board);
   drawTrace([]);
   scheduleSwipePublish([], "");
+
   if (state.result?.summary) {
     setMessage(state.result.summary);
   } else if (state.result?.text) {
     setMessage(state.result.text);
   }
+
   currentWordEl.textContent = `Words: You ${state.players[playerId].word_count}, Opponent ${
     state.opponent.word_count
   }`;
 }
 
-async function joinMatch() {
-  let canResetPinned = !queryMatchId;
+async function initialJoin() {
+  let canFallback = !queryMatchId;
 
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const body = { player: playerId };
     const matchId = activeMatchId();
     if (matchId) {
@@ -632,21 +635,23 @@ async function joinMatch() {
       return true;
     }
 
-    if (data.error === "Match id mismatch") {
-      if (canResetPinned) {
-        canResetPinned = false;
-        pinnedMatchId = null;
-        localStorage.removeItem(matchStorageKey);
-      }
-      await sleep(180);
+    if (data.error === "Match id mismatch" && canFallback) {
+      canFallback = false;
+      clearPinnedMatch();
+      await sleep(120);
       continue;
+    }
+
+    if (data.error === "Match id mismatch") {
+      setMessage("Out of sync. Tap Sync Player.", true);
+      return false;
     }
 
     setMessage(data.error || "Could not join", true);
     return false;
   }
 
-  setMessage("Could not sync to this match. Try reopening from live screen.", true);
+  setMessage("Could not sync to live match. Tap Sync Player.", true);
   return false;
 }
 
@@ -657,33 +662,53 @@ async function pollState() {
     params.set("match_id", matchId);
   }
 
-  const res = await fetch(`/api/state?${params.toString()}`);
-  const data = await res.json();
+  try {
+    const res = await fetch(`/api/state?${params.toString()}`);
+    const data = await res.json();
 
-  if (!data.ok) {
-    if (data.error === "Match id mismatch") {
-      mismatchCount += 1;
-      if (!queryMatchId && mismatchCount > 6) {
-        pinnedMatchId = null;
-        localStorage.removeItem(matchStorageKey);
-        mismatchCount = 0;
+    if (!data.ok) {
+      if (data.error === "Match id mismatch") {
+        setMessage("Out of sync. Tap Sync Player.", true);
+        return;
       }
+      setMessage(data.error || "State error", true);
       return;
     }
-    setMessage(data.error || "State error", true);
-    return;
-  }
 
-  mismatchCount = 0;
-  applyState(data.state);
+    applyState(data.state);
+  } catch {
+    setMessage("Connection lost. Retrying...", true);
+  }
+}
+
+async function syncPlayer() {
+  clearPinnedMatch();
+  renderHiddenBoard();
+
+  try {
+    const res = await fetch(`/api/state?view=player&player=${playerId}`);
+    const data = await res.json();
+    if (!data.ok) {
+      setMessage(data.error || "Could not sync player", true);
+      return;
+    }
+
+    pinMatch(data.state.id);
+    applyState(data.state);
+    await ensureJoined();
+    setMessage(`Player ${playerId} synced`);
+  } catch {
+    setMessage("Could not sync player", true);
+  }
 }
 
 async function init() {
   attachBoardInput();
-  restoreBoardCache();
+  renderHiddenBoard();
   window.addEventListener("resize", () => drawTrace(selectedPath));
+  syncButton.addEventListener("click", syncPlayer);
 
-  const joined = await joinMatch();
+  const joined = await initialJoin();
   if (!joined) {
     return;
   }

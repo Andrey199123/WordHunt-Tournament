@@ -15,8 +15,8 @@ const p2LastEl = document.getElementById("p2-last");
 const p1WordsEl = document.getElementById("p1-words");
 const p2WordsEl = document.getElementById("p2-words");
 const messageEl = document.getElementById("message");
-const startMatchButton = document.getElementById("start-match");
-const newMatchButton = document.getElementById("new-match");
+const matchControlButton = document.getElementById("match-control");
+const syncLiveButton = document.getElementById("sync-live");
 const openPlayer1Link = document.getElementById("open-player-1");
 const openPlayer2Link = document.getElementById("open-player-2");
 
@@ -25,8 +25,8 @@ let currentMatchId = pinnedMatchId;
 let latestState = null;
 let p1BoardSignature = "";
 let p2BoardSignature = "";
-let mismatchCount = 0;
-const pollMs = 220;
+
+const pollMs = 90;
 
 function blankGrid() {
   return Array.from({ length: 4 }, () => Array(4).fill(""));
@@ -67,6 +67,14 @@ function pinMatch(matchId) {
   updatePlayerLinks(matchId);
 }
 
+function clearPinnedMatch() {
+  pinnedMatchId = null;
+  currentMatchId = null;
+  latestState = null;
+  localStorage.removeItem(matchStorageKey);
+  updatePlayerLinks(null);
+}
+
 function activeMatchId() {
   return pinnedMatchId || null;
 }
@@ -77,6 +85,7 @@ function updatePlayerLinks(matchId) {
     openPlayer2Link.href = "/play/2";
     return;
   }
+
   openPlayer1Link.href = `/play/1?match=${encodeURIComponent(matchId)}`;
   openPlayer2Link.href = `/play/2?match=${encodeURIComponent(matchId)}`;
 }
@@ -179,48 +188,20 @@ function renderWords(container, words) {
   });
 }
 
-function updateStartButton(state) {
-  if (state.status === "running") {
-    startMatchButton.disabled = true;
-    startMatchButton.textContent = "Match Running";
-    return;
-  }
-
-  if (state.status === "finished") {
-    startMatchButton.disabled = true;
-    startMatchButton.textContent = "Match Finished";
-    return;
-  }
-
-  if (state.can_start) {
-    startMatchButton.disabled = false;
-    startMatchButton.textContent = "Start Match";
-    return;
-  }
-
-  startMatchButton.disabled = true;
-  const p1Joined = state.players["1"].joined;
-  const p2Joined = state.players["2"].joined;
-  if (!p1Joined && !p2Joined) {
-    startMatchButton.textContent = "Waiting For Players";
-  } else if (!p1Joined) {
-    startMatchButton.textContent = "Waiting For Player 1";
-  } else {
-    startMatchButton.textContent = "Waiting For Player 2";
-  }
-}
-
 function renderHiddenBoards() {
   const hidden = blankGrid();
   const hiddenSig = gridSignature(hidden);
+
   if (p1BoardSignature !== hiddenSig) {
     renderBoard(p1BoardEl, hidden);
     p1BoardSignature = hiddenSig;
   }
+
   if (p2BoardSignature !== hiddenSig) {
     renderBoard(p2BoardEl, hidden);
     p2BoardSignature = hiddenSig;
   }
+
   drawTrace(p1TraceOverlayEl, p1BoardEl, [], "#5fd6ff");
   drawTrace(p2TraceOverlayEl, p2BoardEl, [], "#ffc86e");
   p1TraceWordEl.textContent = "Tracing: waiting for start";
@@ -252,6 +233,41 @@ function renderLiveBoards(state) {
   p2TraceWordEl.textContent = p2Swipe.word ? `Tracing: ${p2Swipe.word.toUpperCase()}` : "Tracing: -";
 }
 
+function updateControlButton(state) {
+  if (!state) {
+    matchControlButton.disabled = false;
+    matchControlButton.textContent = "Create Match";
+    return;
+  }
+
+  if (state.status === "running") {
+    matchControlButton.disabled = true;
+    matchControlButton.textContent = "Match Running";
+    return;
+  }
+
+  if (state.status === "finished") {
+    matchControlButton.disabled = false;
+    matchControlButton.textContent = "Start Next Match";
+    return;
+  }
+
+  if (state.can_start) {
+    matchControlButton.disabled = false;
+    matchControlButton.textContent = "Start Match";
+    return;
+  }
+
+  if (state.players["1"].joined || state.players["2"].joined) {
+    matchControlButton.disabled = false;
+    matchControlButton.textContent = "Reset Match";
+    return;
+  }
+
+  matchControlButton.disabled = false;
+  matchControlButton.textContent = "Create Match";
+}
+
 function applyState(state) {
   if (!state || !state.id) {
     return;
@@ -271,7 +287,6 @@ function applyState(state) {
   }
 
   latestState = state;
-
   timerEl.textContent = formatTime(state.time_remaining);
   statusEl.textContent = state.status[0].toUpperCase() + state.status.slice(1);
 
@@ -289,7 +304,7 @@ function applyState(state) {
     renderLiveBoards(state);
   }
 
-  updateStartButton(state);
+  updateControlButton(state);
 
   if (state.status === "finished" && state.result) {
     setMessage(state.result.summary || state.result.text);
@@ -303,69 +318,86 @@ async function pollState() {
     params.set("match_id", matchId);
   }
 
-  const res = await fetch(`/api/state?${params.toString()}`);
-  const data = await res.json();
+  try {
+    const res = await fetch(`/api/state?${params.toString()}`);
+    const data = await res.json();
 
-  if (!data.ok) {
-    if (data.error === "Match id mismatch") {
-      mismatchCount += 1;
-      if (mismatchCount > 6) {
-        pinnedMatchId = null;
-        localStorage.removeItem(matchStorageKey);
-        updatePlayerLinks(null);
-        mismatchCount = 0;
+    if (!data.ok) {
+      if (data.error === "Match id mismatch") {
+        setMessage("Live out of sync. Click Sync Live Screen.", true);
+        return;
       }
+      setMessage(data.error || "State error", true);
       return;
     }
-    setMessage(data.error || "State error", true);
-    return;
-  }
 
-  mismatchCount = 0;
-  applyState(data.state);
+    applyState(data.state);
+  } catch {
+    setMessage("Connection lost. Retrying...", true);
+  }
 }
 
-newMatchButton.addEventListener("click", async () => {
-  const res = await fetch("/api/new-match", { method: "POST" });
-  const data = await res.json();
-  if (!data.ok) {
-    setMessage(data.error || "Could not start new match", true);
+async function fetchAndAdoptCurrentMatch() {
+  try {
+    const res = await fetch("/api/state?view=spectator");
+    const data = await res.json();
+    if (!data.ok) {
+      setMessage(data.error || "Could not sync live screen", true);
+      return;
+    }
+
+    pinMatch(data.state.id);
+    currentMatchId = data.state.id;
+    applyState(data.state);
+    setMessage("Live screen synced");
+  } catch {
+    setMessage("Could not sync live screen", true);
+  }
+}
+
+matchControlButton.addEventListener("click", async () => {
+  const state = latestState;
+
+  if (!state || state.status === "finished" || (state.status === "waiting" && !state.can_start)) {
+    const res = await fetch("/api/new-match", { method: "POST" });
+    const data = await res.json();
+    if (!data.ok) {
+      setMessage(data.error || "Could not create match", true);
+      return;
+    }
+
+    pinMatch(data.state.id);
+    currentMatchId = data.state.id;
+    applyState(data.state);
+    setMessage("Match created. Open Sync Player 1 and Sync Player 2 links.");
     return;
   }
 
-  pinMatch(data.state.id);
-  currentMatchId = data.state.id;
-  applyState(data.state);
-  setMessage("New match ready. Have both players join, then click Start Match.");
+  if (state.status === "waiting" && state.can_start) {
+    const res = await fetch("/api/start-match", { method: "POST" });
+    const data = await res.json();
+    if (!data.ok) {
+      setMessage(data.error || "Could not start match", true);
+      await pollState();
+      return;
+    }
+
+    pinMatch(data.state.id);
+    applyState(data.state);
+    setMessage("Match started");
+  }
 });
 
-startMatchButton.addEventListener("click", async () => {
-  const body = {};
-  const matchId = activeMatchId();
-  if (matchId) {
-    body.match_id = matchId;
-  }
-
-  const res = await fetch("/api/start-match", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!data.ok) {
-    setMessage(data.error || "Could not start match", true);
-    await pollState();
-    return;
-  }
-  pinMatch(data.state.id);
-  setMessage("Match started");
-  applyState(data.state);
+syncLiveButton.addEventListener("click", async () => {
+  clearPinnedMatch();
+  await fetchAndAdoptCurrentMatch();
 });
 
 window.addEventListener("resize", () => {
   if (!latestState) {
     return;
   }
+
   if (latestState.status === "waiting") {
     renderHiddenBoards();
   } else {
@@ -375,5 +407,6 @@ window.addEventListener("resize", () => {
 
 updatePlayerLinks(pinnedMatchId);
 renderHiddenBoards();
+updateControlButton(null);
 pollState();
 setInterval(pollState, pollMs);

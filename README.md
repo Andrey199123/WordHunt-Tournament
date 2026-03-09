@@ -43,4 +43,4 @@ Then open [http://127.0.0.1:5000](http://127.0.0.1:5000)
 
 - Words must be at least 3 letters.
 - Letters must be formed by adjacent tiles; no tile reused in the same word.
-- Scoring: 3-4 letters = 1, 5 = 2, 6 = 3, 7 = 5, 8+ = 11.
+- Scoring: 3=100, 4=400, 5=800, 6=1400, 7=1800, 8+=2200+.

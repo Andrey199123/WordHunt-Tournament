@@ -88,17 +88,21 @@ MATCH_STATE = new_match()
 
 
 def score_word(word_len: int) -> int:
-    if word_len <= 2:
+    # GamePigeon Word Hunt style scoring by word length.
+    if word_len < 3:
         return 0
-    if word_len <= 4:
-        return 1
+    if word_len == 3:
+        return 100
+    if word_len == 4:
+        return 400
     if word_len == 5:
-        return 2
+        return 800
     if word_len == 6:
-        return 3
+        return 1400
     if word_len == 7:
-        return 5
-    return 11
+        return 1800
+    # 8+ continues scaling by 400.
+    return 2200 + (word_len - 8) * 400
 
 
 def time_remaining(match: dict) -> int:
@@ -366,12 +370,7 @@ def api_join():
 
 @app.post("/api/start-match")
 def api_start_match():
-    body = request.get_json(silent=True) or {}
-    requested_match_id = requested_match_id_from_json(body)
-
     with STATE_LOCK:
-        if match_id_mismatch(requested_match_id, MATCH_STATE):
-            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
 
         if MATCH_STATE["status"] == "finished":

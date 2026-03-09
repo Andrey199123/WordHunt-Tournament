@@ -47,7 +47,10 @@
       </section>
 
       <p id="message" class="message" aria-live="polite"></p>
-      <a class="small-link" href="/">Back to lobby</a>
+      <div class="actions">
+        <button id="sync-player" class="small-button">Sync Player {{ player_id }}</button>
+        <a class="small-link" href="/">Back to lobby</a>
+      </div>
     </main>
 
     <script src="{{ url_for('static', filename='player.js') }}"></script>
