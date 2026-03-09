@@ -25,6 +25,7 @@ let currentMatchId = pinnedMatchId;
 let latestState = null;
 let p1BoardSignature = "";
 let p2BoardSignature = "";
+let mismatchRecoveryInFlight = false;
 
 const pollMs = 90;
 
@@ -352,7 +353,13 @@ async function pollState() {
 
     if (!data.ok) {
       if (data.error === "Match id mismatch") {
-        setMessage("Live out of sync. Click Sync Live Screen.", true);
+        if (!mismatchRecoveryInFlight) {
+          mismatchRecoveryInFlight = true;
+          setMessage("Live out of sync. Recovering...", true);
+          clearPinnedMatch();
+          await fetchAndAdoptCurrentMatch();
+          mismatchRecoveryInFlight = false;
+        }
         return;
       }
       setMessage(data.error || "State error", true);

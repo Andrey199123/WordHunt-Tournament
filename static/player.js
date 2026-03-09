@@ -32,6 +32,7 @@ let activeTouchId = null;
 let activeMouseDown = false;
 let running = false;
 let joinInFlight = false;
+let mismatchRecoveryInFlight = false;
 
 let swipePublishTimer = null;
 let pendingSwipePayload = null;
@@ -556,6 +557,7 @@ async function adoptCurrentMatch() {
     pinMatch(data.state.id);
     applyState(data.state);
     await ensureJoined();
+    setMessage(`Player ${playerId} synced`);
     return true;
   } catch {
     return false;
@@ -682,7 +684,16 @@ async function pollState() {
 
     if (!data.ok) {
       if (data.error === "Match id mismatch") {
-        setMessage("Out of sync. Tap Sync Player.", true);
+        if (!mismatchRecoveryInFlight) {
+          mismatchRecoveryInFlight = true;
+          setMessage("Out of sync. Recovering...", true);
+          clearPinnedMatch();
+          const adopted = await adoptCurrentMatch();
+          if (!adopted) {
+            setMessage("Out of sync. Tap Sync Player.", true);
+          }
+          mismatchRecoveryInFlight = false;
+        }
         return;
       }
       setMessage(data.error || "State error", true);
