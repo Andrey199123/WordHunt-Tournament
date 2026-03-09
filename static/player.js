@@ -36,6 +36,7 @@ let mismatchRecoveryInFlight = false;
 
 let swipePublishTimer = null;
 let pendingSwipePayload = null;
+let lastPublishedSwipeKey = "";
 
 const pollMs = 100;
 
@@ -84,6 +85,7 @@ function pinMatch(matchId) {
 function clearPinnedMatch() {
   pinnedMatchId = null;
   currentMatchId = null;
+  lastPublishedSwipeKey = "";
   localStorage.removeItem(matchStorageKey);
 }
 
@@ -222,10 +224,16 @@ function scheduleSwipePublish(pathPayload, word) {
       return;
     }
     await publishSwipe(payload.path, payload.word);
-  }, 25);
+  }, 40);
 }
 
 async function publishSwipe(pathPayload, word) {
+  const publishKey = `${word}|${JSON.stringify(pathPayload)}`;
+  if (publishKey === lastPublishedSwipeKey) {
+    return;
+  }
+  lastPublishedSwipeKey = publishKey;
+
   const body = { player: playerId, path: pathPayload, word };
   const matchId = activeMatchId();
   if (matchId) {
@@ -570,8 +578,8 @@ function applyState(state) {
   }
 
   if (pinnedMatchId && state.id !== pinnedMatchId) {
-    // Ignore off-match snapshots from transient stale responses.
-    return;
+    pinMatch(state.id);
+    setMessage("Player re-synced to current match");
   }
 
   if (!pinnedMatchId) {
@@ -580,6 +588,7 @@ function applyState(state) {
 
   if (currentMatchId !== state.id) {
     currentMatchId = state.id;
+    lastPublishedSwipeKey = "";
     setMessage("Match synced");
   }
 

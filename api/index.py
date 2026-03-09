@@ -1,10 +1,18 @@
+import json
+import os
 import random
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request
+
+try:
+    import redis
+except ImportError:  # pragma: no cover - fallback for local envs without redis package
+    redis = None
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
@@ -38,6 +46,17 @@ DICE = [
 
 WORD_SET = set()
 STATE_LOCK = threading.Lock()
+REDIS_STATE_KEY = "wordhunt:match_state:v1"
+REDIS_LOCK_KEY = "wordhunt:match_lock:v1"
+REDIS_URL = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
+
+REDIS_CLIENT = None
+if redis is not None and REDIS_URL:
+    try:
+        REDIS_CLIENT = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        REDIS_CLIENT.ping()
+    except Exception:
+        REDIS_CLIENT = None
 
 
 def load_word_set() -> set[str]:
@@ -87,6 +106,153 @@ def new_match() -> dict:
 MATCH_STATE = new_match()
 
 
+def blank_player_state() -> dict:
+    return {"joined": False, "score": 0, "words": [], "last_points": 0}
+
+
+def blank_swipe_state() -> dict:
+    return {"path": [], "word": "", "updated_at": None}
+
+
+def hydrate_match(raw_state) -> dict:
+    if not isinstance(raw_state, dict):
+        return new_match()
+
+    state = raw_state
+    if not isinstance(state.get("id"), str) or not state["id"]:
+        state["id"] = uuid.uuid4().hex[:8]
+
+    board = state.get("board")
+    if not (
+        isinstance(board, list)
+        and len(board) == 4
+        and all(isinstance(row, list) and len(row) == 4 for row in board)
+    ):
+        state["board"] = generate_board()
+
+    if state.get("status") not in {"waiting", "running", "finished"}:
+        state["status"] = "waiting"
+
+    try:
+        state["duration"] = int(state.get("duration", 90))
+    except (TypeError, ValueError):
+        state["duration"] = 90
+    if state["duration"] <= 0:
+        state["duration"] = 90
+
+    if "start_time" not in state:
+        state["start_time"] = None
+    if "created_at" not in state:
+        state["created_at"] = time.time()
+
+    players = state.get("players")
+    if not isinstance(players, dict):
+        players = {}
+    for pid in ("1", "2"):
+        player = players.get(pid)
+        if not isinstance(player, dict):
+            player = blank_player_state()
+        player["joined"] = bool(player.get("joined", False))
+        try:
+            player["score"] = int(player.get("score", 0))
+        except (TypeError, ValueError):
+            player["score"] = 0
+        try:
+            player["last_points"] = int(player.get("last_points", 0))
+        except (TypeError, ValueError):
+            player["last_points"] = 0
+        words = player.get("words", [])
+        if not isinstance(words, list):
+            words = []
+        player["words"] = [normalize_word(str(word)) for word in words if normalize_word(str(word))]
+        players[pid] = player
+    state["players"] = players
+
+    swipes = state.get("active_swipes")
+    if not isinstance(swipes, dict):
+        swipes = {}
+    for pid in ("1", "2"):
+        swipe = swipes.get(pid)
+        if not isinstance(swipe, dict):
+            swipe = blank_swipe_state()
+        swipe["path"] = sanitize_path(swipe.get("path", []))
+        swipe["word"] = normalize_word(str(swipe.get("word", "")))[:16]
+        updated_at = swipe.get("updated_at")
+        if updated_at is not None:
+            try:
+                updated_at = float(updated_at)
+            except (TypeError, ValueError):
+                updated_at = None
+        swipe["updated_at"] = updated_at
+        swipes[pid] = swipe
+    state["active_swipes"] = swipes
+
+    return state
+
+
+def dump_state(state: dict) -> str:
+    return json.dumps(state, separators=(",", ":"))
+
+
+def load_match_state() -> dict:
+    global MATCH_STATE
+    if REDIS_CLIENT is None:
+        MATCH_STATE = hydrate_match(MATCH_STATE)
+        return MATCH_STATE
+
+    raw_state = REDIS_CLIENT.get(REDIS_STATE_KEY)
+    if not raw_state:
+        state = new_match()
+        REDIS_CLIENT.set(REDIS_STATE_KEY, dump_state(state))
+        return state
+
+    try:
+        parsed = json.loads(raw_state)
+    except json.JSONDecodeError:
+        parsed = new_match()
+    return hydrate_match(parsed)
+
+
+def save_match_state(state: dict) -> None:
+    global MATCH_STATE
+    state = hydrate_match(state)
+    if REDIS_CLIENT is None:
+        MATCH_STATE = state
+        return
+    REDIS_CLIENT.set(REDIS_STATE_KEY, dump_state(state))
+
+
+@contextmanager
+def state_guard():
+    if REDIS_CLIENT is None:
+        with STATE_LOCK:
+            yield
+        return
+
+    lock = REDIS_CLIENT.lock(REDIS_LOCK_KEY, timeout=8, blocking_timeout=4, sleep=0.02, thread_local=False)
+    acquired = False
+    try:
+        acquired = bool(lock.acquire(blocking=True))
+        if not acquired:
+            raise RuntimeError("Could not acquire state lock")
+        yield
+    finally:
+        if acquired:
+            try:
+                lock.release()
+            except Exception:
+                pass
+
+
+@contextmanager
+def locked_match(writeback: bool = True):
+    with state_guard():
+        match = load_match_state()
+        yield match
+        if writeback:
+            save_match_state(match)
+
+
 def score_word(word_len: int) -> int:
     # GamePigeon Word Hunt style scoring by word length.
     if word_len < 3:
@@ -112,13 +278,16 @@ def time_remaining(match: dict) -> int:
     return max(0, match["duration"] - elapsed)
 
 
-def update_match_status(match: dict) -> None:
+def update_match_status(match: dict) -> bool:
+    changed = False
     if match["start_time"] is None:
-        return
-    if time_remaining(match) == 0:
+        return changed
+    if time_remaining(match) == 0 and match["status"] != "finished":
         match["status"] = "finished"
         match["active_swipes"]["1"] = {"path": [], "word": "", "updated_at": None}
         match["active_swipes"]["2"] = {"path": [], "word": "", "updated_at": None}
+        changed = True
+    return changed
 
 
 def players_ready_to_start(match: dict) -> bool:
@@ -155,7 +324,8 @@ def sanitize_path(raw_path) -> list[list[int]]:
     return sanitized
 
 
-def cleanup_stale_swipes(match: dict, stale_after_seconds: float = 1.2) -> None:
+def cleanup_stale_swipes(match: dict, stale_after_seconds: float = 1.2) -> bool:
+    changed = False
     now = time.time()
     for player in ("1", "2"):
         swipe = match["active_swipes"][player]
@@ -164,6 +334,8 @@ def cleanup_stale_swipes(match: dict, stale_after_seconds: float = 1.2) -> None:
             continue
         if now - float(updated_at) > stale_after_seconds:
             match["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
+            changed = True
+    return changed
 
 
 def normalize_word(raw_word: str) -> str:
@@ -247,7 +419,6 @@ def winner_info(match: dict):
 
 
 def serialize_state(match: dict, view: str, player: str | None) -> dict:
-    cleanup_stale_swipes(match)
     remaining = time_remaining(match)
     payload = {
         "id": match["id"],
@@ -305,6 +476,10 @@ def error(message: str, status: int = 400):
     return jsonify({"ok": False, "error": message}), status
 
 
+def state_unavailable_error():
+    return error("State sync temporarily unavailable. Please retry.", 503)
+
+
 @app.get("/")
 def home():
     return render_template("home.html")
@@ -324,10 +499,13 @@ def spectate():
 
 @app.post("/api/new-match")
 def api_new_match():
-    global MATCH_STATE
-    with STATE_LOCK:
-        MATCH_STATE = new_match()
-        return jsonify({"ok": True, "state": serialize_state(MATCH_STATE, "spectator", None)})
+    try:
+        with state_guard():
+            match = new_match()
+            save_match_state(match)
+            return jsonify({"ok": True, "state": serialize_state(match, "spectator", None)})
+    except RuntimeError:
+        return state_unavailable_error()
 
 
 @app.post("/api/join")
@@ -337,31 +515,37 @@ def api_join():
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
 
-    with STATE_LOCK:
-        if MATCH_STATE["status"] == "finished":
-            return error("Match finished. Start a new match.")
+    try:
+        with locked_match(writeback=True) as match:
+            if match["status"] == "finished":
+                return error("Match finished. Start a new match.")
 
-        MATCH_STATE["players"][player]["joined"] = True
-        return jsonify({"ok": True, "state": serialize_state(MATCH_STATE, "player", player)})
+            match["players"][player]["joined"] = True
+            return jsonify({"ok": True, "state": serialize_state(match, "player", player)})
+    except RuntimeError:
+        return state_unavailable_error()
 
 
 @app.post("/api/start-match")
 def api_start_match():
-    with STATE_LOCK:
-        update_match_status(MATCH_STATE)
+    try:
+        with locked_match(writeback=True) as match:
+            update_match_status(match)
 
-        if MATCH_STATE["status"] == "finished":
-            return error("Match finished. Start a new match.")
+            if match["status"] == "finished":
+                return error("Match finished. Start a new match.")
 
-        if MATCH_STATE["status"] == "running":
-            return error("Match already running")
+            if match["status"] == "running":
+                return error("Match already running")
 
-        if not players_ready_to_start(MATCH_STATE):
-            return error("Both players must join before starting")
+            if not players_ready_to_start(match):
+                return error("Both players must join before starting")
 
-        MATCH_STATE["start_time"] = time.time()
-        MATCH_STATE["status"] = "running"
-        return jsonify({"ok": True, "state": serialize_state(MATCH_STATE, "spectator", None)})
+            match["start_time"] = time.time()
+            match["status"] = "running"
+            return jsonify({"ok": True, "state": serialize_state(match, "spectator", None)})
+    except RuntimeError:
+        return state_unavailable_error()
 
 
 @app.post("/api/submit")
@@ -375,41 +559,44 @@ def api_submit():
     if len(submitted) < 3:
         return error("Word must be at least 3 letters")
 
-    with STATE_LOCK:
-        update_match_status(MATCH_STATE)
+    try:
+        with locked_match(writeback=True) as match:
+            update_match_status(match)
 
-        if MATCH_STATE["status"] != "running":
-            return error("Match is not running")
+            if match["status"] != "running":
+                return error("Match is not running")
 
-        if time_remaining(MATCH_STATE) <= 0:
-            MATCH_STATE["status"] = "finished"
-            return error("Time is up")
+            if time_remaining(match) <= 0:
+                match["status"] = "finished"
+                return error("Time is up")
 
-        player_state = MATCH_STATE["players"][player]
-        if submitted in player_state["words"]:
-            return error("Already found")
+            player_state = match["players"][player]
+            if submitted in player_state["words"]:
+                return error("Already found")
 
-        if submitted not in WORD_SET:
-            return error("Not in dictionary")
+            if submitted not in WORD_SET:
+                return error("Not in dictionary")
 
-        if not word_on_board(submitted, MATCH_STATE["board"]):
-            return error("Word not found on board")
+            if not word_on_board(submitted, match["board"]):
+                return error("Word not found on board")
 
-        points = score_word(len(submitted))
-        player_state["words"].append(submitted)
-        player_state["score"] += points
-        player_state["last_points"] = points
-        MATCH_STATE["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
+            points = score_word(len(submitted))
+            player_state["words"].append(submitted)
+            player_state["score"] += points
+            player_state["last_points"] = points
+            match["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
 
-        return jsonify(
-            {
-                "ok": True,
-                "word": submitted,
-                "points": points,
-                "score": player_state["score"],
-                "state": serialize_state(MATCH_STATE, "player", player),
-            }
-        )
+            return jsonify(
+                {
+                    "ok": True,
+                    "word": submitted,
+                    "points": points,
+                    "score": player_state["score"],
+                    "state": serialize_state(match, "player", player),
+                }
+            )
+    except RuntimeError:
+        return state_unavailable_error()
 
 
 @app.post("/api/swipe-update")
@@ -419,21 +606,24 @@ def api_swipe_update():
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
 
-    with STATE_LOCK:
-        update_match_status(MATCH_STATE)
+    try:
+        with locked_match(writeback=True) as match:
+            update_match_status(match)
 
-        if MATCH_STATE["status"] != "running":
-            MATCH_STATE["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
+            if match["status"] != "running":
+                match["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
+                return jsonify({"ok": True})
+
+            path = sanitize_path(body.get("path", []))
+            word = normalize_word(str(body.get("word", "")))[:16]
+            match["active_swipes"][player] = {
+                "path": path,
+                "word": word,
+                "updated_at": time.time(),
+            }
             return jsonify({"ok": True})
-
-        path = sanitize_path(body.get("path", []))
-        word = normalize_word(str(body.get("word", "")))[:16]
-        MATCH_STATE["active_swipes"][player] = {
-            "path": path,
-            "word": word,
-            "updated_at": time.time(),
-        }
-        return jsonify({"ok": True})
+    except RuntimeError:
+        return state_unavailable_error()
 
 
 @app.get("/api/state")
@@ -441,14 +631,20 @@ def api_state():
     view = request.args.get("view", "spectator")
     player = request.args.get("player")
 
-    with STATE_LOCK:
-        update_match_status(MATCH_STATE)
-        if view not in {"spectator", "player"}:
-            return error("Invalid view")
-        if view == "player" and player not in {"1", "2"}:
-            return error("Missing player id")
+    if view not in {"spectator", "player"}:
+        return error("Invalid view")
+    if view == "player" and player not in {"1", "2"}:
+        return error("Missing player id")
 
-        return jsonify({"ok": True, "state": serialize_state(MATCH_STATE, view, player)})
+    try:
+        with locked_match(writeback=False) as match:
+            dirty = update_match_status(match)
+            dirty = cleanup_stale_swipes(match) or dirty
+            if dirty:
+                save_match_state(match)
+            return jsonify({"ok": True, "state": serialize_state(match, view, player)})
+    except RuntimeError:
+        return state_unavailable_error()
 
 
 WORD_SET = load_word_set()
