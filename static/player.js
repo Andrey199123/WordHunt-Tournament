@@ -1,4 +1,7 @@
 const playerId = document.body.dataset.playerId;
+const queryMatchId = new URLSearchParams(window.location.search).get("match");
+const matchStorageKey = `wordhunt_player_${playerId}_match_id`;
+const boardStorageKey = `wordhunt_player_${playerId}_board_cache`;
 
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
@@ -12,8 +15,14 @@ const wordsEl = document.getElementById("words");
 const messageEl = document.getElementById("message");
 const currentWordEl = document.getElementById("current-word");
 
-let currentMatchId = null;
+let pinnedMatchId = queryMatchId || localStorage.getItem(matchStorageKey) || null;
+if (queryMatchId) {
+  localStorage.setItem(matchStorageKey, queryMatchId);
+}
+
+let currentMatchId = pinnedMatchId;
 let board = [];
+let boardSignature = "";
 let isSelecting = false;
 let selectedPath = [];
 let selectedWord = "";
@@ -23,8 +32,32 @@ let activeMouseDown = false;
 let running = false;
 let swipePublishTimer = null;
 let pendingSwipePayload = null;
+let mismatchCount = 0;
 
 const pollMs = 350;
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function blankGrid() {
+  return Array.from({ length: 4 }, () => Array(4).fill(""));
+}
+
+function isValidBoard(grid) {
+  return (
+    Array.isArray(grid) &&
+    grid.length === 4 &&
+    grid.every((row) => Array.isArray(row) && row.length === 4)
+  );
+}
+
+function gridSignature(grid) {
+  if (!isValidBoard(grid)) {
+    return "";
+  }
+  return grid.map((row) => row.join("")).join("|");
+}
 
 function setMessage(text, isError = false) {
   messageEl.textContent = text || "";
@@ -35,6 +68,18 @@ function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+function pinMatch(matchId) {
+  if (!matchId) {
+    return;
+  }
+  pinnedMatchId = matchId;
+  localStorage.setItem(matchStorageKey, matchId);
+}
+
+function activeMatchId() {
+  return pinnedMatchId || queryMatchId || null;
 }
 
 function parsePos(tile) {
@@ -48,7 +93,7 @@ function parsePos(tile) {
 function isAdjacent(a, b) {
   const dr = Math.abs(a.r - b.r);
   const dc = Math.abs(a.c - b.c);
-  return dr <= 1 && dc <= 1 && (dr + dc > 0);
+  return dr <= 1 && dc <= 1 && dr + dc > 0;
 }
 
 function renderBoard(grid) {
@@ -57,10 +102,13 @@ function renderBoard(grid) {
     row.forEach((token, c) => {
       const tile = document.createElement("div");
       tile.className = "tile";
+      if (!token) {
+        tile.classList.add("placeholder");
+      }
       tile.dataset.row = String(r);
       tile.dataset.col = String(c);
-      tile.dataset.token = token;
-      tile.textContent = token;
+      tile.dataset.token = token || "";
+      tile.textContent = token || "";
       boardEl.appendChild(tile);
     });
   });
@@ -128,6 +176,79 @@ function selectionPathPayload() {
   return selectedPath.map((cell) => [cell.r, cell.c]);
 }
 
+function persistBoardCache(matchId, grid) {
+  if (!matchId || !isValidBoard(grid)) {
+    return;
+  }
+  localStorage.setItem(
+    boardStorageKey,
+    JSON.stringify({ match_id: matchId, board: grid, saved_at: Date.now() }),
+  );
+}
+
+function restoreBoardCache() {
+  if (!queryMatchId) {
+    renderBoard(blankGrid());
+    drawTrace([]);
+    return;
+  }
+
+  try {
+    const raw = localStorage.getItem(boardStorageKey);
+    if (!raw) {
+      renderBoard(blankGrid());
+      drawTrace([]);
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || !isValidBoard(parsed.board)) {
+      renderBoard(blankGrid());
+      drawTrace([]);
+      return;
+    }
+
+    if (pinnedMatchId && parsed.match_id && pinnedMatchId !== parsed.match_id) {
+      renderBoard(blankGrid());
+      drawTrace([]);
+      return;
+    }
+
+    board = parsed.board;
+    boardSignature = gridSignature(board);
+    renderBoard(board);
+    drawTrace([]);
+    currentWordEl.textContent = "Reconnecting to match...";
+  } catch {
+    renderBoard(blankGrid());
+    drawTrace([]);
+  }
+}
+
+function showHiddenBoard() {
+  const hiddenSig = gridSignature(blankGrid());
+  if (boardSignature !== hiddenSig) {
+    renderBoard(blankGrid());
+    boardSignature = hiddenSig;
+  }
+  drawTrace([]);
+}
+
+function showLiveBoard(grid, matchId) {
+  if (!isValidBoard(grid)) {
+    return;
+  }
+
+  const sig = gridSignature(grid);
+  if (sig !== boardSignature) {
+    board = grid;
+    boardSignature = sig;
+    renderBoard(board);
+  }
+  drawTrace(selectedPath);
+  persistBoardCache(matchId, grid);
+}
+
 function scheduleSwipePublish(pathPayload, word) {
   pendingSwipePayload = { path: pathPayload, word };
   if (swipePublishTimer !== null) {
@@ -146,11 +267,17 @@ function scheduleSwipePublish(pathPayload, word) {
 }
 
 async function publishSwipe(pathPayload, word) {
+  const body = { player: playerId, path: pathPayload, word };
+  const matchId = activeMatchId();
+  if (matchId) {
+    body.match_id = matchId;
+  }
+
   try {
     await fetch("/api/swipe-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ player: playerId, path: pathPayload, word }),
+      body: JSON.stringify(body),
     });
   } catch {
     // Ignore transient network misses while tracing.
@@ -166,7 +293,7 @@ function updateSelectionUi() {
   drawTrace(selectedPath);
 
   if (!selectedWord) {
-    currentWordEl.textContent = "Swipe tiles to form words";
+    currentWordEl.textContent = running ? "Swipe tiles to form words" : "Waiting for live screen to start";
     return;
   }
   currentWordEl.textContent = selectedWord.toUpperCase();
@@ -181,11 +308,15 @@ function clearSelection() {
 }
 
 function addTileToSelection(tile) {
-  if (!tile || !tile.classList.contains("tile")) {
+  if (!tile || !tile.classList.contains("tile") || !tile.dataset.token) {
     return;
   }
 
   const pos = parsePos(tile);
+  if (!pos.token) {
+    return;
+  }
+
   if (selectedPath.some((cell) => cell.r === pos.r && cell.c === pos.c)) {
     return;
   }
@@ -202,14 +333,23 @@ function addTileToSelection(tile) {
 }
 
 async function submitWord(word) {
+  const body = { player: playerId, word };
+  const matchId = activeMatchId();
+  if (matchId) {
+    body.match_id = matchId;
+  }
+
   const res = await fetch("/api/submit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ player: playerId, word }),
+    body: JSON.stringify(body),
   });
   const data = await res.json();
 
   if (!data.ok) {
+    if (data.error === "Match id mismatch") {
+      return;
+    }
     setMessage(data.error || "Word rejected", true);
     return;
   }
@@ -230,7 +370,7 @@ function startSelectionAtPoint(clientX, clientY) {
   }
 
   const tile = tileAt(clientX, clientY);
-  if (!tile) {
+  if (!tile || !tile.dataset.token) {
     return false;
   }
 
@@ -410,12 +550,22 @@ function renderWords(words) {
 }
 
 function applyState(state) {
+  if (!state || !state.id) {
+    return;
+  }
+
+  if (pinnedMatchId && state.id !== pinnedMatchId) {
+    return;
+  }
+
+  if (!pinnedMatchId) {
+    pinMatch(state.id);
+  }
+
   if (currentMatchId !== state.id) {
     currentMatchId = state.id;
-    board = state.board;
-    renderBoard(board);
     clearSelection();
-    setMessage("New match loaded");
+    setMessage("Match synced");
   }
 
   timerEl.textContent = formatTime(state.time_remaining);
@@ -428,59 +578,111 @@ function applyState(state) {
   if (state.status === "waiting") {
     statusEl.textContent = "Waiting";
     running = false;
-    if (!isSelecting) {
-      currentWordEl.textContent = "Waiting for live screen to start";
-    }
-  } else if (state.status === "running") {
+    showHiddenBoard();
+    currentWordEl.textContent = "Waiting for live screen to start";
+    scheduleSwipePublish([], "");
+    return;
+  }
+
+  if (state.status === "running") {
     statusEl.textContent = "Running";
     running = true;
-  } else {
-    statusEl.textContent = "Finished";
-    running = false;
-    if (state.result) {
-      if (state.result.winner === "tie") {
-        setMessage("Tie game");
-      } else if (state.result.winner === playerId) {
-        setMessage("You win");
-      } else {
-        setMessage("You lose");
-      }
+    showLiveBoard(state.board, state.id);
+    if (!isSelecting && !selectedWord) {
+      currentWordEl.textContent = "Swipe tiles to form words";
     }
+    return;
   }
+
+  statusEl.textContent = "Finished";
+  running = false;
+  showLiveBoard(state.board, state.id);
+  drawTrace([]);
+  scheduleSwipePublish([], "");
+  if (state.result?.summary) {
+    setMessage(state.result.summary);
+  } else if (state.result?.text) {
+    setMessage(state.result.text);
+  }
+  currentWordEl.textContent = `Words: You ${state.players[playerId].word_count}, Opponent ${
+    state.opponent.word_count
+  }`;
 }
 
 async function joinMatch() {
-  const res = await fetch("/api/join", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ player: playerId }),
-  });
-  const data = await res.json();
+  let canResetPinned = !queryMatchId;
 
-  if (!data.ok) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const body = { player: playerId };
+    const matchId = activeMatchId();
+    if (matchId) {
+      body.match_id = matchId;
+    }
+
+    const res = await fetch("/api/join", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (data.ok) {
+      pinMatch(data.state.id);
+      applyState(data.state);
+      return true;
+    }
+
+    if (data.error === "Match id mismatch") {
+      if (canResetPinned) {
+        canResetPinned = false;
+        pinnedMatchId = null;
+        localStorage.removeItem(matchStorageKey);
+      }
+      await sleep(180);
+      continue;
+    }
+
     setMessage(data.error || "Could not join", true);
     return false;
   }
 
-  applyState(data.state);
-  return true;
+  setMessage("Could not sync to this match. Try reopening from live screen.", true);
+  return false;
 }
 
 async function pollState() {
-  const res = await fetch(`/api/state?view=player&player=${playerId}`);
+  const params = new URLSearchParams({ view: "player", player: playerId });
+  const matchId = activeMatchId();
+  if (matchId) {
+    params.set("match_id", matchId);
+  }
+
+  const res = await fetch(`/api/state?${params.toString()}`);
   const data = await res.json();
 
   if (!data.ok) {
+    if (data.error === "Match id mismatch") {
+      mismatchCount += 1;
+      if (!queryMatchId && mismatchCount > 6) {
+        pinnedMatchId = null;
+        localStorage.removeItem(matchStorageKey);
+        mismatchCount = 0;
+      }
+      return;
+    }
     setMessage(data.error || "State error", true);
     return;
   }
 
+  mismatchCount = 0;
   applyState(data.state);
 }
 
 async function init() {
   attachBoardInput();
+  restoreBoardCache();
   window.addEventListener("resize", () => drawTrace(selectedPath));
+
   const joined = await joinMatch();
   if (!joined) {
     return;

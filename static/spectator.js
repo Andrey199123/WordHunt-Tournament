@@ -1,3 +1,5 @@
+const matchStorageKey = "wordhunt_spectator_match_id";
+
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
 const p1BoardEl = document.getElementById("p1-board");
@@ -15,10 +17,35 @@ const p2WordsEl = document.getElementById("p2-words");
 const messageEl = document.getElementById("message");
 const startMatchButton = document.getElementById("start-match");
 const newMatchButton = document.getElementById("new-match");
+const openPlayer1Link = document.getElementById("open-player-1");
+const openPlayer2Link = document.getElementById("open-player-2");
 
-let currentMatchId = null;
+let pinnedMatchId = localStorage.getItem(matchStorageKey) || null;
+let currentMatchId = pinnedMatchId;
 let latestState = null;
-const pollMs = 180;
+let p1BoardSignature = "";
+let p2BoardSignature = "";
+let mismatchCount = 0;
+const pollMs = 220;
+
+function blankGrid() {
+  return Array.from({ length: 4 }, () => Array(4).fill(""));
+}
+
+function isValidBoard(grid) {
+  return (
+    Array.isArray(grid) &&
+    grid.length === 4 &&
+    grid.every((row) => Array.isArray(row) && row.length === 4)
+  );
+}
+
+function gridSignature(grid) {
+  if (!isValidBoard(grid)) {
+    return "";
+  }
+  return grid.map((row) => row.join("")).join("|");
+}
 
 function setMessage(text, isError = false) {
   messageEl.textContent = text || "";
@@ -31,15 +58,41 @@ function formatTime(totalSeconds) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function pinMatch(matchId) {
+  if (!matchId) {
+    return;
+  }
+  pinnedMatchId = matchId;
+  localStorage.setItem(matchStorageKey, matchId);
+  updatePlayerLinks(matchId);
+}
+
+function activeMatchId() {
+  return pinnedMatchId || null;
+}
+
+function updatePlayerLinks(matchId) {
+  if (!matchId) {
+    openPlayer1Link.href = "/play/1";
+    openPlayer2Link.href = "/play/2";
+    return;
+  }
+  openPlayer1Link.href = `/play/1?match=${encodeURIComponent(matchId)}`;
+  openPlayer2Link.href = `/play/2?match=${encodeURIComponent(matchId)}`;
+}
+
 function renderBoard(container, grid) {
   container.innerHTML = "";
   grid.forEach((row, r) => {
     row.forEach((token, c) => {
       const tile = document.createElement("div");
       tile.className = "tile";
+      if (!token) {
+        tile.classList.add("placeholder");
+      }
       tile.dataset.row = String(r);
       tile.dataset.col = String(c);
-      tile.textContent = token;
+      tile.textContent = token || "";
       container.appendChild(tile);
     });
   });
@@ -157,15 +210,67 @@ function updateStartButton(state) {
   }
 }
 
+function renderHiddenBoards() {
+  const hidden = blankGrid();
+  const hiddenSig = gridSignature(hidden);
+  if (p1BoardSignature !== hiddenSig) {
+    renderBoard(p1BoardEl, hidden);
+    p1BoardSignature = hiddenSig;
+  }
+  if (p2BoardSignature !== hiddenSig) {
+    renderBoard(p2BoardEl, hidden);
+    p2BoardSignature = hiddenSig;
+  }
+  drawTrace(p1TraceOverlayEl, p1BoardEl, [], "#5fd6ff");
+  drawTrace(p2TraceOverlayEl, p2BoardEl, [], "#ffc86e");
+  p1TraceWordEl.textContent = "Tracing: waiting for start";
+  p2TraceWordEl.textContent = "Tracing: waiting for start";
+}
+
+function renderLiveBoards(state) {
+  if (!isValidBoard(state.board)) {
+    return;
+  }
+
+  const sig = gridSignature(state.board);
+  if (p1BoardSignature !== sig) {
+    renderBoard(p1BoardEl, state.board);
+    p1BoardSignature = sig;
+  }
+  if (p2BoardSignature !== sig) {
+    renderBoard(p2BoardEl, state.board);
+    p2BoardSignature = sig;
+  }
+
+  const p1Swipe = state.swipes?.["1"] || { path: [], word: "" };
+  const p2Swipe = state.swipes?.["2"] || { path: [], word: "" };
+
+  drawTrace(p1TraceOverlayEl, p1BoardEl, p1Swipe.path, "#5fd6ff");
+  drawTrace(p2TraceOverlayEl, p2BoardEl, p2Swipe.path, "#ffc86e");
+
+  p1TraceWordEl.textContent = p1Swipe.word ? `Tracing: ${p1Swipe.word.toUpperCase()}` : "Tracing: -";
+  p2TraceWordEl.textContent = p2Swipe.word ? `Tracing: ${p2Swipe.word.toUpperCase()}` : "Tracing: -";
+}
+
 function applyState(state) {
-  latestState = state;
+  if (!state || !state.id) {
+    return;
+  }
+
+  if (pinnedMatchId && state.id !== pinnedMatchId) {
+    return;
+  }
+
+  if (!pinnedMatchId) {
+    pinMatch(state.id);
+  }
 
   if (currentMatchId !== state.id) {
     currentMatchId = state.id;
-    renderBoard(p1BoardEl, state.board);
-    renderBoard(p2BoardEl, state.board);
-    setMessage("New match loaded");
+    setMessage("Match synced");
   }
+
+  latestState = state;
 
   timerEl.textContent = formatTime(state.time_remaining);
   statusEl.textContent = state.status[0].toUpperCase() + state.status.slice(1);
@@ -178,29 +283,45 @@ function applyState(state) {
   renderWords(p1WordsEl, state.players["1"].words || []);
   renderWords(p2WordsEl, state.players["2"].words || []);
 
-  const p1Swipe = state.swipes?.["1"] || { path: [], word: "" };
-  const p2Swipe = state.swipes?.["2"] || { path: [], word: "" };
-  drawTrace(p1TraceOverlayEl, p1BoardEl, p1Swipe.path, "#5fd6ff");
-  drawTrace(p2TraceOverlayEl, p2BoardEl, p2Swipe.path, "#ffc86e");
-  p1TraceWordEl.textContent = p1Swipe.word ? `Tracing: ${p1Swipe.word.toUpperCase()}` : "Tracing: -";
-  p2TraceWordEl.textContent = p2Swipe.word ? `Tracing: ${p2Swipe.word.toUpperCase()}` : "Tracing: -";
+  if (state.status === "waiting") {
+    renderHiddenBoards();
+  } else {
+    renderLiveBoards(state);
+  }
 
   updateStartButton(state);
 
   if (state.status === "finished" && state.result) {
-    setMessage(state.result.text);
+    setMessage(state.result.summary || state.result.text);
   }
 }
 
 async function pollState() {
-  const res = await fetch("/api/state?view=spectator");
+  const params = new URLSearchParams({ view: "spectator" });
+  const matchId = activeMatchId();
+  if (matchId) {
+    params.set("match_id", matchId);
+  }
+
+  const res = await fetch(`/api/state?${params.toString()}`);
   const data = await res.json();
 
   if (!data.ok) {
+    if (data.error === "Match id mismatch") {
+      mismatchCount += 1;
+      if (mismatchCount > 6) {
+        pinnedMatchId = null;
+        localStorage.removeItem(matchStorageKey);
+        updatePlayerLinks(null);
+        mismatchCount = 0;
+      }
+      return;
+    }
     setMessage(data.error || "State error", true);
     return;
   }
 
+  mismatchCount = 0;
   applyState(data.state);
 }
 
@@ -211,17 +332,32 @@ newMatchButton.addEventListener("click", async () => {
     setMessage(data.error || "Could not start new match", true);
     return;
   }
+
+  pinMatch(data.state.id);
+  currentMatchId = data.state.id;
   applyState(data.state);
+  setMessage("New match ready. Have both players join, then click Start Match.");
 });
 
 startMatchButton.addEventListener("click", async () => {
-  const res = await fetch("/api/start-match", { method: "POST" });
+  const body = {};
+  const matchId = activeMatchId();
+  if (matchId) {
+    body.match_id = matchId;
+  }
+
+  const res = await fetch("/api/start-match", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   const data = await res.json();
   if (!data.ok) {
     setMessage(data.error || "Could not start match", true);
     await pollState();
     return;
   }
+  pinMatch(data.state.id);
   setMessage("Match started");
   applyState(data.state);
 });
@@ -230,11 +366,14 @@ window.addEventListener("resize", () => {
   if (!latestState) {
     return;
   }
-  const p1Swipe = latestState.swipes?.["1"] || { path: [], word: "" };
-  const p2Swipe = latestState.swipes?.["2"] || { path: [], word: "" };
-  drawTrace(p1TraceOverlayEl, p1BoardEl, p1Swipe.path, "#5fd6ff");
-  drawTrace(p2TraceOverlayEl, p2BoardEl, p2Swipe.path, "#ffc86e");
+  if (latestState.status === "waiting") {
+    renderHiddenBoards();
+  } else {
+    renderLiveBoards(latestState);
+  }
 });
 
+updatePlayerLinks(pinnedMatchId);
+renderHiddenBoards();
 pollState();
 setInterval(pollState, pollMs);

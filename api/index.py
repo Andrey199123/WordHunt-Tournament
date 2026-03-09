@@ -208,12 +208,38 @@ def word_on_board(word: str, board: list[list[str]]) -> bool:
 def winner_info(match: dict):
     p1 = match["players"]["1"]["score"]
     p2 = match["players"]["2"]["score"]
+    p1_words = len(match["players"]["1"]["words"])
+    p2_words = len(match["players"]["2"]["words"])
 
     if p1 == p2:
-        return {"winner": "tie", "text": "Tie game"}
+        return {
+            "winner": "tie",
+            "text": "Tie game",
+            "p1_words": p1_words,
+            "p2_words": p2_words,
+            "p1_score": p1,
+            "p2_score": p2,
+            "summary": f"Tie game. P1: {p1} pts, {p1_words} words. P2: {p2} pts, {p2_words} words.",
+        }
     if p1 > p2:
-        return {"winner": "1", "text": "Player 1 wins"}
-    return {"winner": "2", "text": "Player 2 wins"}
+        return {
+            "winner": "1",
+            "text": "Player 1 wins",
+            "p1_words": p1_words,
+            "p2_words": p2_words,
+            "p1_score": p1,
+            "p2_score": p2,
+            "summary": f"Player 1 wins. P1: {p1} pts, {p1_words} words. P2: {p2} pts, {p2_words} words.",
+        }
+    return {
+        "winner": "2",
+        "text": "Player 2 wins",
+        "p1_words": p1_words,
+        "p2_words": p2_words,
+        "p1_score": p1,
+        "p2_score": p2,
+        "summary": f"Player 2 wins. P1: {p1} pts, {p1_words} words. P2: {p2} pts, {p2_words} words.",
+    }
 
 
 def serialize_state(match: dict, view: str, player: str | None) -> dict:
@@ -275,6 +301,26 @@ def error(message: str, status: int = 400):
     return jsonify({"ok": False, "error": message}), status
 
 
+def requested_match_id_from_json(body: dict) -> str | None:
+    raw = body.get("match_id")
+    if raw is None:
+        return None
+    value = str(raw).strip()
+    return value or None
+
+
+def requested_match_id_from_query() -> str | None:
+    raw = request.args.get("match_id")
+    if raw is None:
+        return None
+    value = raw.strip()
+    return value or None
+
+
+def match_id_mismatch(requested_id: str | None, match: dict) -> bool:
+    return requested_id is not None and requested_id != match["id"]
+
+
 @app.get("/")
 def home():
     return render_template("home.html")
@@ -306,8 +352,11 @@ def api_join():
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
+    requested_match_id = requested_match_id_from_json(body)
 
     with STATE_LOCK:
+        if match_id_mismatch(requested_match_id, MATCH_STATE):
+            return error("Match id mismatch", 409)
         if MATCH_STATE["status"] == "finished":
             return error("Match finished. Start a new match.")
 
@@ -317,7 +366,12 @@ def api_join():
 
 @app.post("/api/start-match")
 def api_start_match():
+    body = request.get_json(silent=True) or {}
+    requested_match_id = requested_match_id_from_json(body)
+
     with STATE_LOCK:
+        if match_id_mismatch(requested_match_id, MATCH_STATE):
+            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
 
         if MATCH_STATE["status"] == "finished":
@@ -340,12 +394,15 @@ def api_submit():
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
+    requested_match_id = requested_match_id_from_json(body)
 
     submitted = normalize_word(str(body.get("word", "")))
     if len(submitted) < 3:
         return error("Word must be at least 3 letters")
 
     with STATE_LOCK:
+        if match_id_mismatch(requested_match_id, MATCH_STATE):
+            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
 
         if MATCH_STATE["status"] != "running":
@@ -388,8 +445,11 @@ def api_swipe_update():
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
+    requested_match_id = requested_match_id_from_json(body)
 
     with STATE_LOCK:
+        if match_id_mismatch(requested_match_id, MATCH_STATE):
+            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
 
         if MATCH_STATE["status"] != "running":
@@ -410,8 +470,11 @@ def api_swipe_update():
 def api_state():
     view = request.args.get("view", "spectator")
     player = request.args.get("player")
+    requested_match_id = requested_match_id_from_query()
 
     with STATE_LOCK:
+        if match_id_mismatch(requested_match_id, MATCH_STATE):
+            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
         if view not in {"spectator", "player"}:
             return error("Invalid view")
