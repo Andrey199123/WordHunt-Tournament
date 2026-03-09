@@ -570,7 +570,8 @@ function applyState(state) {
   }
 
   if (pinnedMatchId && state.id !== pinnedMatchId) {
-    return;
+    pinMatch(state.id);
+    setMessage("Player re-synced to live match");
   }
 
   if (!pinnedMatchId) {

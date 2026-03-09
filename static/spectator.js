@@ -303,7 +303,8 @@ function applyState(state) {
   }
 
   if (pinnedMatchId && state.id !== pinnedMatchId) {
-    return;
+    pinMatch(state.id);
+    setMessage("Live re-synced to current match");
   }
 
   if (!pinnedMatchId) {
