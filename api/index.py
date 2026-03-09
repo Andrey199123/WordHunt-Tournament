@@ -14,10 +14,12 @@ try:
 except ImportError:  # pragma: no cover - fallback for local envs without redis package
     redis = None
 
+# Project folders so this file can find templates, static files, and dictionary data.
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 WORD_LIST_PATH = DATA_DIR / "words.txt"
 
+# Flask app serves both HTML pages and JSON API routes.
 app = Flask(
     __name__,
     template_folder=str(BASE_DIR / "templates"),
@@ -45,6 +47,7 @@ DICE = [
 ]
 
 WORD_SET = set()
+# Local process lock used only when Redis is not configured.
 STATE_LOCK = threading.Lock()
 REDIS_STATE_KEY = "wordhunt:match_state:v1"
 REDIS_LOCK_KEY = "wordhunt:match_lock:v1"
@@ -53,13 +56,16 @@ REDIS_URL = os.environ.get("REDIS_URL") or os.environ.get("KV_URL")
 REDIS_CLIENT = None
 if redis is not None and REDIS_URL:
     try:
+        # decode_responses=True gives us normal Python strings instead of bytes.
         REDIS_CLIENT = redis.Redis.from_url(REDIS_URL, decode_responses=True)
         REDIS_CLIENT.ping()
     except Exception:
+        # Safe fallback for local/offline environments.
         REDIS_CLIENT = None
 
 
 def load_word_set() -> set[str]:
+    # Load dictionary words once at startup into a set for fast lookup.
     words: set[str] = set()
     if not WORD_LIST_PATH.exists():
         return words
@@ -73,6 +79,7 @@ def load_word_set() -> set[str]:
 
 
 def generate_board() -> list[list[str]]:
+    # Make a fresh 4x4 board by shuffling dice, then picking one face per die.
     dice = DICE[:]
     random.shuffle(dice)
 
@@ -85,6 +92,7 @@ def generate_board() -> list[list[str]]:
 
 
 def new_match() -> dict:
+    # The full game state object. Think of this as "everything about one match".
     return {
         "id": uuid.uuid4().hex[:8],
         "board": generate_board(),
@@ -107,14 +115,18 @@ MATCH_STATE = new_match()
 
 
 def blank_player_state() -> dict:
+    # Default shape for each player. Used to repair malformed saved state.
     return {"joined": False, "score": 0, "words": [], "last_points": 0}
 
 
 def blank_swipe_state() -> dict:
+    # Current finger/mouse swipe path, mirrored to spectator in real time.
     return {"path": [], "word": "", "updated_at": None}
 
 
 def hydrate_match(raw_state) -> dict:
+    # "Hydration" means: take stored data and force it back into valid shape.
+    # This prevents crashes from missing fields, wrong types, or old schema.
     if not isinstance(raw_state, dict):
         return new_match()
 
@@ -191,17 +203,21 @@ def hydrate_match(raw_state) -> dict:
 
 
 def dump_state(state: dict) -> str:
+    # Compact JSON keeps Redis payloads small.
     return json.dumps(state, separators=(",", ":"))
 
 
 def load_match_state() -> dict:
     global MATCH_STATE
+    # If Redis is unavailable, use in-process memory.
     if REDIS_CLIENT is None:
         MATCH_STATE = hydrate_match(MATCH_STATE)
         return MATCH_STATE
 
+    # Read shared state from Redis so all clients/functions see the same match.
     raw_state = REDIS_CLIENT.get(REDIS_STATE_KEY)
     if not raw_state:
+        # First request in a fresh environment: create initial match state.
         state = new_match()
         REDIS_CLIENT.set(REDIS_STATE_KEY, dump_state(state))
         return state
@@ -219,16 +235,19 @@ def save_match_state(state: dict) -> None:
     if REDIS_CLIENT is None:
         MATCH_STATE = state
         return
+    # Persist to Redis for cross-instance consistency.
     REDIS_CLIENT.set(REDIS_STATE_KEY, dump_state(state))
 
 
 @contextmanager
 def state_guard():
+    # This lock keeps two requests from editing match state at the same time.
     if REDIS_CLIENT is None:
         with STATE_LOCK:
             yield
         return
 
+    # Redis lock is needed on serverless, where multiple instances may run.
     lock = REDIS_CLIENT.lock(REDIS_LOCK_KEY, timeout=8, blocking_timeout=4, sleep=0.02, thread_local=False)
     acquired = False
     try:
@@ -246,6 +265,7 @@ def state_guard():
 
 @contextmanager
 def locked_match(writeback: bool = True):
+    # One helper for "load state + mutate safely + save state".
     with state_guard():
         match = load_match_state()
         yield match
@@ -272,6 +292,7 @@ def score_word(word_len: int) -> int:
 
 
 def time_remaining(match: dict) -> int:
+    # Before start, remaining time is full duration.
     if match["start_time"] is None:
         return match["duration"]
     elapsed = int(time.time() - match["start_time"])
@@ -279,6 +300,7 @@ def time_remaining(match: dict) -> int:
 
 
 def update_match_status(match: dict) -> bool:
+    # Automatically move running -> finished when timer reaches 0.
     changed = False
     if match["start_time"] is None:
         return changed
@@ -291,12 +313,15 @@ def update_match_status(match: dict) -> bool:
 
 
 def players_ready_to_start(match: dict) -> bool:
+    # Spectator can only start once both players joined.
     p1_ready = match["players"]["1"]["joined"]
     p2_ready = match["players"]["2"]["joined"]
     return p1_ready and p2_ready
 
 
 def sanitize_path(raw_path) -> list[list[int]]:
+    # Accept only unique, in-bounds [row, col] tiles from the client.
+    # This protects against malformed payloads and accidental duplicates.
     if not isinstance(raw_path, list):
         return []
 
@@ -325,6 +350,7 @@ def sanitize_path(raw_path) -> list[list[int]]:
 
 
 def cleanup_stale_swipes(match: dict, stale_after_seconds: float = 1.2) -> bool:
+    # Swipe traces are temporary. If updates stop, clear stale visuals.
     changed = False
     now = time.time()
     for player in ("1", "2"):
@@ -339,10 +365,12 @@ def cleanup_stale_swipes(match: dict, stale_after_seconds: float = 1.2) -> bool:
 
 
 def normalize_word(raw_word: str) -> str:
+    # Keep letters only so case/punctuation do not affect matching.
     return "".join(ch for ch in raw_word.lower() if ch.isalpha())
 
 
 def neighbors(r: int, c: int):
+    # Yield the 8 surrounding cells in a 4x4 board.
     for dr in (-1, 0, 1):
         for dc in (-1, 0, 1):
             if dr == 0 and dc == 0:
@@ -353,11 +381,15 @@ def neighbors(r: int, c: int):
 
 
 def word_on_board(word: str, board: list[list[str]]) -> bool:
+    # DFS checks if a word can be traced through adjacent tiles.
+    # This enforces the real Word Hunt adjacency rule.
     target = word.lower()
     tokens = [[cell.lower() for cell in row] for row in board]
 
     def dfs(r: int, c: int, idx: int, visited: set[tuple[int, int]]) -> bool:
         token = tokens[r][c]
+        # Some cells may represent multi-letter tokens (like "qu"), so we
+        # compare prefixes and advance by token length, not always by 1.
         if not target.startswith(token, idx):
             return False
 
@@ -382,6 +414,7 @@ def word_on_board(word: str, board: list[list[str]]) -> bool:
 
 
 def winner_info(match: dict):
+    # Compute winner data used by all screens at the end.
     p1 = match["players"]["1"]["score"]
     p2 = match["players"]["2"]["score"]
     p1_words = len(match["players"]["1"]["words"])
@@ -419,6 +452,7 @@ def winner_info(match: dict):
 
 
 def serialize_state(match: dict, view: str, player: str | None) -> dict:
+    # Build a safe response model for the requested view.
     remaining = time_remaining(match)
     payload = {
         "id": match["id"],
@@ -444,6 +478,7 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
     }
 
     if view == "spectator":
+        # Spectator gets both players' word lists and live swipe traces.
         payload["players"]["1"]["words"] = match["players"]["1"]["words"]
         payload["players"]["2"]["words"] = match["players"]["2"]["words"]
         payload["swipes"] = {
@@ -457,6 +492,7 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
             },
         }
     elif view == "player" and player in {"1", "2"}:
+        # Player gets their own found words and summarized opponent stats.
         opponent = "2" if player == "1" else "1"
         payload["my_words"] = match["players"][player]["words"]
         payload["opponent"] = {
@@ -473,10 +509,12 @@ def serialize_state(match: dict, view: str, player: str | None) -> dict:
 
 
 def error(message: str, status: int = 400):
+    # Standard API error shape.
     return jsonify({"ok": False, "error": message}), status
 
 
 def state_unavailable_error():
+    # Returned when lock acquisition fails under heavy contention.
     return error("State sync temporarily unavailable. Please retry.", 503)
 
 
@@ -499,6 +537,7 @@ def spectate():
 
 @app.post("/api/new-match")
 def api_new_match():
+    # Creates a fresh board and fully resets both players.
     try:
         with state_guard():
             match = new_match()
@@ -510,6 +549,7 @@ def api_new_match():
 
 @app.post("/api/join")
 def api_join():
+    # Player "checks in" to the current waiting/running match.
     body = request.get_json(silent=True) or {}
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
@@ -528,6 +568,7 @@ def api_join():
 
 @app.post("/api/start-match")
 def api_start_match():
+    # Spectator starts timer only if both players have joined.
     try:
         with locked_match(writeback=True) as match:
             update_match_status(match)
@@ -550,6 +591,7 @@ def api_start_match():
 
 @app.post("/api/submit")
 def api_submit():
+    # Main scoring endpoint: receives one completed word from a player.
     body = request.get_json(silent=True) or {}
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
@@ -561,6 +603,7 @@ def api_submit():
 
     try:
         with locked_match(writeback=True) as match:
+            # Re-check status on every request in case timer ended mid-round.
             update_match_status(match)
 
             if match["status"] != "running":
@@ -574,6 +617,7 @@ def api_submit():
             if submitted in player_state["words"]:
                 return error("Already found")
 
+            # Dictionary + board shape checks must both pass.
             if submitted not in WORD_SET:
                 return error("Not in dictionary")
 
@@ -601,6 +645,7 @@ def api_submit():
 
 @app.post("/api/swipe-update")
 def api_swipe_update():
+    # Lightweight live telemetry so spectator can mirror active swipe traces.
     body = request.get_json(silent=True) or {}
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
@@ -614,6 +659,7 @@ def api_swipe_update():
                 match["active_swipes"][player] = {"path": [], "word": "", "updated_at": None}
                 return jsonify({"ok": True})
 
+            # Path/word is sanitized server-side even if client sends bad data.
             path = sanitize_path(body.get("path", []))
             word = normalize_word(str(body.get("word", "")))[:16]
             match["active_swipes"][player] = {
@@ -628,6 +674,7 @@ def api_swipe_update():
 
 @app.get("/api/state")
 def api_state():
+    # Read-only state endpoint used by polling loops in player/spectator clients.
     view = request.args.get("view", "spectator")
     player = request.args.get("player")
 
@@ -638,6 +685,7 @@ def api_state():
 
     try:
         with locked_match(writeback=False) as match:
+            # Keep match status and swipe traces up-to-date during reads.
             dirty = update_match_status(match)
             dirty = cleanup_stale_swipes(match) or dirty
             if dirty:

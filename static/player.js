@@ -2,6 +2,7 @@ const playerId = document.body.dataset.playerId;
 const queryMatchId = new URLSearchParams(window.location.search).get("match");
 const matchStorageKey = `wordhunt_player_${playerId}_match_id`;
 
+// Cache important DOM nodes once so render/update code stays fast.
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
 const boardEl = document.getElementById("board");
@@ -15,6 +16,8 @@ const messageEl = document.getElementById("message");
 const currentWordEl = document.getElementById("current-word");
 const syncButton = document.getElementById("sync-player");
 
+// A player can open from a spectator-provided URL (?match=...), then keep that
+// match id pinned in localStorage so refreshes stay on the same live match.
 let pinnedMatchId = queryMatchId || localStorage.getItem(matchStorageKey) || null;
 if (queryMatchId) {
   localStorage.setItem(matchStorageKey, queryMatchId);
@@ -38,6 +41,7 @@ let swipePublishTimer = null;
 let pendingSwipePayload = null;
 let lastPublishedSwipeKey = "";
 
+// Fast polling keeps timer/scores/traces feeling real-time.
 const pollMs = 100;
 
 function sleep(ms) {
@@ -45,10 +49,12 @@ function sleep(ms) {
 }
 
 function blankGrid() {
+  // Hidden board = same shape as real board, but no letters.
   return Array.from({ length: 4 }, () => Array(4).fill(""));
 }
 
 function isValidBoard(grid) {
+  // Defensive checks prevent render errors when responses are incomplete.
   return (
     Array.isArray(grid) &&
     grid.length === 4 &&
@@ -57,6 +63,7 @@ function isValidBoard(grid) {
 }
 
 function gridSignature(grid) {
+  // Signature lets us skip expensive re-renders when board content is unchanged.
   if (!isValidBoard(grid)) {
     return "";
   }
@@ -69,12 +76,14 @@ function setMessage(text, isError = false) {
 }
 
 function formatTime(totalSeconds) {
+  // Convert raw seconds to game-style M:SS display.
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function pinMatch(matchId) {
+  // "Pinning" means this tab is locked to one match id.
   if (!matchId) {
     return;
   }
@@ -83,6 +92,7 @@ function pinMatch(matchId) {
 }
 
 function clearPinnedMatch() {
+  // Reset local sync state so player can re-attach to the current live match.
   pinnedMatchId = null;
   currentMatchId = null;
   lastPublishedSwipeKey = "";
@@ -94,6 +104,7 @@ function activeMatchId() {
 }
 
 function renderBoard(grid) {
+  // Board is re-created from state so UI cannot drift from server truth.
   boardEl.innerHTML = "";
   grid.forEach((row, r) => {
     row.forEach((token, c) => {
@@ -112,6 +123,7 @@ function renderBoard(grid) {
 }
 
 function renderHiddenBoard() {
+  // While waiting, hide letters to prevent pre-round memorization/cheating.
   const hidden = blankGrid();
   const hiddenSignature = gridSignature(hidden);
   if (boardSignature !== hiddenSignature) {
@@ -122,6 +134,7 @@ function renderHiddenBoard() {
 }
 
 function renderLiveBoard(grid) {
+  // During running/finished, show the actual board letters.
   if (!isValidBoard(grid)) {
     return;
   }
@@ -135,6 +148,7 @@ function renderLiveBoard(grid) {
 }
 
 function tileCenter(row, col) {
+  // SVG trace uses tile center coordinates in board-local space.
   const tile = boardEl.querySelector(`.tile[data-row="${row}"][data-col="${col}"]`);
   if (!tile) {
     return null;
@@ -149,6 +163,7 @@ function tileCenter(row, col) {
 }
 
 function drawTrace(path) {
+  // This draws the "line connecting tiles" while swiping.
   const boardRect = boardEl.getBoundingClientRect();
   const width = Math.max(1, Math.round(boardRect.width));
   const height = Math.max(1, Math.round(boardRect.height));
@@ -201,16 +216,20 @@ function parsePos(tile) {
 }
 
 function isAdjacent(a, b) {
+  // Word Hunt rule: next tile must touch previous tile (including diagonals).
   const dr = Math.abs(a.r - b.r);
   const dc = Math.abs(a.c - b.c);
   return dr <= 1 && dc <= 1 && dr + dc > 0;
 }
 
 function selectionPathPayload() {
+  // Backend stores path as [row, col] pairs.
   return selectedPath.map((cell) => [cell.r, cell.c]);
 }
 
 function scheduleSwipePublish(pathPayload, word) {
+  // Coalesce rapid pointer events into one network update every ~40ms.
+  // This keeps spectator feed smooth without spamming requests.
   pendingSwipePayload = { path: pathPayload, word };
   if (swipePublishTimer !== null) {
     return;
@@ -228,6 +247,7 @@ function scheduleSwipePublish(pathPayload, word) {
 }
 
 async function publishSwipe(pathPayload, word) {
+  // Skip duplicate payloads to reduce noise/latency.
   const publishKey = `${word}|${JSON.stringify(pathPayload)}`;
   if (publishKey === lastPublishedSwipeKey) {
     return;
@@ -247,11 +267,12 @@ async function publishSwipe(pathPayload, word) {
       body: JSON.stringify(body),
     });
   } catch {
-    // Ignore transient misses while tracing.
+    // Ignore transient misses while tracing; poll loop will keep UI in sync.
   }
 }
 
 function updateSelectionUi() {
+  // Highlight selected tiles + update live word preview text.
   const pathSet = new Set(selectedPath.map((cell) => `${cell.r},${cell.c}`));
   boardEl.querySelectorAll(".tile").forEach((tile) => {
     const key = `${tile.dataset.row},${tile.dataset.col}`;
@@ -268,6 +289,7 @@ function updateSelectionUi() {
 }
 
 function clearSelection() {
+  // Called when swipe ends or when state changes (waiting/finished/etc.).
   isSelecting = false;
   selectedPath = [];
   selectedWord = "";
@@ -276,6 +298,7 @@ function clearSelection() {
 }
 
 function addTileToSelection(tile) {
+  // Reject invalid tile interactions early.
   if (!tile || !tile.classList.contains("tile") || !tile.dataset.token) {
     return;
   }
@@ -286,11 +309,13 @@ function addTileToSelection(tile) {
   }
 
   if (selectedPath.some((cell) => cell.r === pos.r && cell.c === pos.c)) {
+    // Cannot reuse the same tile in one word path.
     return;
   }
 
   const last = selectedPath[selectedPath.length - 1];
   if (last && !isAdjacent(last, pos)) {
+    // Enforce adjacency.
     return;
   }
 
@@ -301,6 +326,7 @@ function addTileToSelection(tile) {
 }
 
 async function submitWord(word) {
+  // Final word validation/scoring always happens on the backend.
   const body = { player: playerId, word };
   const matchId = activeMatchId();
   if (matchId) {
@@ -316,6 +342,7 @@ async function submitWord(word) {
 
   if (!data.ok) {
     if (data.error === "Match id mismatch") {
+      // Player is attached to old match id, so ask for manual resync.
       setMessage("Out of sync. Tap Sync Player.", true);
       return;
     }
@@ -328,11 +355,13 @@ async function submitWord(word) {
 }
 
 function tileAt(clientX, clientY) {
+  // Hit-test pointer position to nearest tile.
   const element = document.elementFromPoint(clientX, clientY);
   return element ? element.closest(".tile") : null;
 }
 
 function startSelectionAtPoint(clientX, clientY) {
+  // Ignore touches before match starts.
   if (!running) {
     return false;
   }
@@ -349,6 +378,7 @@ function startSelectionAtPoint(clientX, clientY) {
 }
 
 function continueSelectionAtPoint(clientX, clientY) {
+  // Add newly entered tiles as finger/mouse moves.
   if (!isSelecting) {
     return;
   }
@@ -356,6 +386,7 @@ function continueSelectionAtPoint(clientX, clientY) {
 }
 
 async function finishSelection() {
+  // Complete swipe, then submit if it formed a legal-length word.
   if (!isSelecting) {
     return;
   }
@@ -369,9 +400,11 @@ async function finishSelection() {
 }
 
 function attachBoardInput() {
+  // Pointer Events path (desktop + most modern browsers).
   if (window.PointerEvent) {
     boardEl.addEventListener("pointerdown", (event) => {
       if (event.pointerType === "touch") {
+        // Touch is handled by dedicated touch listeners below.
         return;
       }
       if (event.button !== undefined && event.button !== 0) {
@@ -411,6 +444,7 @@ function attachBoardInput() {
     document.addEventListener("pointercancel", onPointerEnd);
   }
 
+  // Dedicated touch listeners improve compatibility on iPad/mobile browsers.
   boardEl.addEventListener(
     "touchstart",
     (event) => {
@@ -473,6 +507,7 @@ function attachBoardInput() {
   document.addEventListener("touchcancel", onTouchEnd, { passive: false });
 
   if (!window.PointerEvent) {
+    // Legacy mouse fallback for very old browsers without Pointer Events.
     boardEl.addEventListener("mousedown", (event) => {
       if (event.button !== 0) {
         return;
@@ -503,6 +538,7 @@ function attachBoardInput() {
 }
 
 function renderWords(words) {
+  // Player-only list of their accepted words.
   wordsEl.innerHTML = "";
   if (!words.length) {
     wordsEl.textContent = "No words yet";
@@ -518,6 +554,7 @@ function renderWords(words) {
 }
 
 async function ensureJoined() {
+  // Re-assert join in case player tab loaded before spectator created match.
   if (joinInFlight) {
     return;
   }
@@ -555,6 +592,7 @@ async function ensureJoined() {
 }
 
 async function adoptCurrentMatch() {
+  // Force this player tab to follow whichever match the server marks as current.
   try {
     const res = await fetch(`/api/state?view=player&player=${playerId}`);
     const data = await res.json();
@@ -573,6 +611,7 @@ async function adoptCurrentMatch() {
 }
 
 function applyState(state) {
+  // Central state machine: waiting -> running -> finished.
   if (!state || !state.id) {
     return;
   }
@@ -594,6 +633,7 @@ function applyState(state) {
 
   latestState = state;
 
+  // HUD values are always driven by server state.
   timerEl.textContent = formatTime(state.time_remaining);
   myScoreEl.textContent = String(state.players[playerId].score);
   myLastEl.textContent = `+${state.players[playerId].last_points || 0} pts`;
@@ -624,6 +664,7 @@ function applyState(state) {
     return;
   }
 
+  // Finished state keeps board visible and announces winner summary.
   statusEl.textContent = "Finished";
   running = false;
   renderLiveBoard(state.board);
@@ -642,6 +683,7 @@ function applyState(state) {
 }
 
 async function initialJoin() {
+  // Retry loop helps during brief network race conditions at match startup.
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const body = { player: playerId };
     const matchId = activeMatchId();
@@ -663,6 +705,7 @@ async function initialJoin() {
     }
 
     if (data.error === "Match id mismatch") {
+      // Try to auto-adopt latest live match before giving up.
       clearPinnedMatch();
       const adopted = await adoptCurrentMatch();
       if (adopted) {
@@ -682,6 +725,7 @@ async function initialJoin() {
 }
 
 async function pollState() {
+  // Polling keeps this tab synced with timer, scores, and match transitions.
   const params = new URLSearchParams({ view: "player", player: playerId });
   const matchId = activeMatchId();
   if (matchId) {
@@ -694,6 +738,7 @@ async function pollState() {
 
     if (!data.ok) {
       if (data.error === "Match id mismatch") {
+        // Avoid parallel recoveries that can fight each other.
         if (!mismatchRecoveryInFlight) {
           mismatchRecoveryInFlight = true;
           setMessage("Out of sync. Recovering...", true);
@@ -717,6 +762,7 @@ async function pollState() {
 }
 
 async function syncPlayer() {
+  // Manual sync button for classrooms/demo setups with tab swaps/reconnects.
   clearPinnedMatch();
   renderHiddenBoard();
 
@@ -733,6 +779,11 @@ async function syncPlayer() {
 }
 
 async function init() {
+  // App bootstrap order:
+  // 1) input listeners
+  // 2) hidden board placeholder
+  // 3) initial join
+  // 4) polling loop
   attachBoardInput();
   renderHiddenBoard();
   window.addEventListener("resize", () => drawTrace(selectedPath));

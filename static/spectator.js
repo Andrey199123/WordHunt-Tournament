@@ -1,5 +1,6 @@
 const matchStorageKey = "wordhunt_spectator_match_id";
 
+// Main spectator/host dashboard DOM handles.
 const timerEl = document.getElementById("timer");
 const statusEl = document.getElementById("status");
 const p1BoardEl = document.getElementById("p1-board");
@@ -20,6 +21,7 @@ const syncLiveButton = document.getElementById("sync-live");
 const openPlayer1Link = document.getElementById("open-player-1");
 const openPlayer2Link = document.getElementById("open-player-2");
 
+// Spectator pins match id so refresh keeps controlling the same game.
 let pinnedMatchId = localStorage.getItem(matchStorageKey) || null;
 let currentMatchId = pinnedMatchId;
 let latestState = null;
@@ -27,9 +29,11 @@ let p1BoardSignature = "";
 let p2BoardSignature = "";
 let mismatchRecoveryInFlight = false;
 
+// Slightly faster than player polling so live screen feels immediate.
 const pollMs = 90;
 
 function blankGrid() {
+  // Hidden board for pre-game waiting screen.
   return Array.from({ length: 4 }, () => Array(4).fill(""));
 }
 
@@ -42,6 +46,7 @@ function isValidBoard(grid) {
 }
 
 function gridSignature(grid) {
+  // Signature lets us avoid re-rendering identical boards each poll.
   if (!isValidBoard(grid)) {
     return "";
   }
@@ -54,12 +59,14 @@ function setMessage(text, isError = false) {
 }
 
 function formatTime(totalSeconds) {
+  // Convert seconds to M:SS.
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function pinMatch(matchId) {
+  // Persist active match id + regenerate player join links.
   if (!matchId) {
     return;
   }
@@ -69,6 +76,7 @@ function pinMatch(matchId) {
 }
 
 function clearPinnedMatch() {
+  // Reset local sync and player links.
   pinnedMatchId = null;
   currentMatchId = null;
   latestState = null;
@@ -81,6 +89,7 @@ function activeMatchId() {
 }
 
 function updatePlayerLinks(matchId) {
+  // Player links include ?match=... so each player joins the correct live round.
   if (!matchId) {
     openPlayer1Link.href = "/play/1";
     openPlayer2Link.href = "/play/2";
@@ -92,6 +101,7 @@ function updatePlayerLinks(matchId) {
 }
 
 async function openPlayerWithFreshMatch(playerId, event) {
+  // Before opening a player tab, re-fetch state so link uses current match id.
   if (event) {
     event.preventDefault();
   }
@@ -108,6 +118,7 @@ async function openPlayerWithFreshMatch(playerId, event) {
     currentMatchId = data.state.id;
     applyState(data.state);
 
+    // Always open player in new tab so host view remains on projector/main screen.
     const url = `/play/${playerId}?match=${encodeURIComponent(data.state.id)}`;
     if (event && (event.metaKey || event.ctrlKey || event.shiftKey)) {
       window.open(url, "_blank", "noopener");
@@ -120,6 +131,7 @@ async function openPlayerWithFreshMatch(playerId, event) {
 }
 
 function renderBoard(container, grid) {
+  // Render one 4x4 board grid into the target container.
   container.innerHTML = "";
   grid.forEach((row, r) => {
     row.forEach((token, c) => {
@@ -137,6 +149,7 @@ function renderBoard(container, grid) {
 }
 
 function tileCenter(boardEl, row, col) {
+  // Used by SVG overlay to draw swipe paths between tile centers.
   const tile = boardEl.querySelector(`.tile[data-row="${row}"][data-col="${col}"]`);
   if (!tile) {
     return null;
@@ -151,6 +164,7 @@ function tileCenter(boardEl, row, col) {
 }
 
 function drawTrace(overlayEl, boardEl, path, color) {
+  // Mirror each player's live swipe on spectator screen.
   const boardRect = boardEl.getBoundingClientRect();
   const width = Math.max(1, Math.round(boardRect.width));
   const height = Math.max(1, Math.round(boardRect.height));
@@ -203,6 +217,7 @@ function drawTrace(overlayEl, boardEl, path, color) {
 }
 
 function renderWords(container, words) {
+  // Right panel chips for each accepted word per player.
   container.innerHTML = "";
   if (!words.length) {
     container.textContent = "No words yet";
@@ -218,6 +233,7 @@ function renderWords(container, words) {
 }
 
 function renderHiddenBoards() {
+  // Before start: hide letters and clear trace overlays.
   const hidden = blankGrid();
   const hiddenSig = gridSignature(hidden);
 
@@ -238,6 +254,7 @@ function renderHiddenBoards() {
 }
 
 function renderLiveBoards(state) {
+  // During running/finished: show letters and live traces for both players.
   if (!isValidBoard(state.board)) {
     return;
   }
@@ -263,6 +280,8 @@ function renderLiveBoards(state) {
 }
 
 function updateControlButton(state) {
+  // Single button changes behavior based on match phase:
+  // create/reset/start/next round.
   if (!state) {
     matchControlButton.disabled = false;
     matchControlButton.textContent = "Create Match";
@@ -298,6 +317,7 @@ function updateControlButton(state) {
 }
 
 function applyState(state) {
+  // Central spectator renderer for every poll response.
   if (!state || !state.id) {
     return;
   }
@@ -320,6 +340,7 @@ function applyState(state) {
   timerEl.textContent = formatTime(state.time_remaining);
   statusEl.textContent = state.status[0].toUpperCase() + state.status.slice(1);
 
+  // Score HUD for both players.
   p1ScoreEl.textContent = String(state.players["1"].score);
   p2ScoreEl.textContent = String(state.players["2"].score);
   p1LastEl.textContent = `+${state.players["1"].last_points || 0}`;
@@ -337,11 +358,13 @@ function applyState(state) {
   updateControlButton(state);
 
   if (state.status === "finished" && state.result) {
+    // Final winner/tie message.
     setMessage(state.result.summary || state.result.text);
   }
 }
 
 async function pollState() {
+  // Poll loop keeps live feed responsive without websocket complexity.
   const params = new URLSearchParams({ view: "spectator" });
   const matchId = activeMatchId();
   if (matchId) {
@@ -354,6 +377,7 @@ async function pollState() {
 
     if (!data.ok) {
       if (data.error === "Match id mismatch") {
+        // Run one recovery flow at a time to avoid recovery loops.
         if (!mismatchRecoveryInFlight) {
           mismatchRecoveryInFlight = true;
           setMessage("Live out of sync. Recovering...", true);
@@ -374,6 +398,7 @@ async function pollState() {
 }
 
 async function fetchAndAdoptCurrentMatch() {
+  // Force spectator tab to follow whichever match is currently active on server.
   try {
     const res = await fetch("/api/state?view=spectator");
     const data = await res.json();
@@ -392,6 +417,7 @@ async function fetchAndAdoptCurrentMatch() {
 }
 
 matchControlButton.addEventListener("click", async () => {
+  // The same button can create/reset OR start, depending on current state.
   const state = latestState;
 
   if (!state || state.status === "finished" || (state.status === "waiting" && !state.can_start)) {
@@ -425,6 +451,7 @@ matchControlButton.addEventListener("click", async () => {
 });
 
 syncLiveButton.addEventListener("click", async () => {
+  // Manual recovery when host changes device/tab or sees stale state.
   clearPinnedMatch();
   await fetchAndAdoptCurrentMatch();
 });
@@ -433,6 +460,7 @@ openPlayer1Link.addEventListener("click", (event) => openPlayerWithFreshMatch("1
 openPlayer2Link.addEventListener("click", (event) => openPlayerWithFreshMatch("2", event));
 
 window.addEventListener("resize", () => {
+  // Redraw traces because tile coordinates change after resize.
   if (!latestState) {
     return;
   }
