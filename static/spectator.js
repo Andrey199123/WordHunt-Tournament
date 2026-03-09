@@ -303,8 +303,8 @@ function applyState(state) {
   }
 
   if (pinnedMatchId && state.id !== pinnedMatchId) {
-    pinMatch(state.id);
-    setMessage("Live re-synced to current match");
+    // Ignore off-match snapshots from transient stale responses.
+    return;
   }
 
   if (!pinnedMatchId) {
