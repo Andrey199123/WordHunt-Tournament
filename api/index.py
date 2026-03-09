@@ -305,26 +305,6 @@ def error(message: str, status: int = 400):
     return jsonify({"ok": False, "error": message}), status
 
 
-def requested_match_id_from_json(body: dict) -> str | None:
-    raw = body.get("match_id")
-    if raw is None:
-        return None
-    value = str(raw).strip()
-    return value or None
-
-
-def requested_match_id_from_query() -> str | None:
-    raw = request.args.get("match_id")
-    if raw is None:
-        return None
-    value = raw.strip()
-    return value or None
-
-
-def match_id_mismatch(requested_id: str | None, match: dict) -> bool:
-    return requested_id is not None and requested_id != match["id"]
-
-
 @app.get("/")
 def home():
     return render_template("home.html")
@@ -356,11 +336,8 @@ def api_join():
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
-    requested_match_id = requested_match_id_from_json(body)
 
     with STATE_LOCK:
-        if match_id_mismatch(requested_match_id, MATCH_STATE):
-            return error("Match id mismatch", 409)
         if MATCH_STATE["status"] == "finished":
             return error("Match finished. Start a new match.")
 
@@ -393,15 +370,12 @@ def api_submit():
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
-    requested_match_id = requested_match_id_from_json(body)
 
     submitted = normalize_word(str(body.get("word", "")))
     if len(submitted) < 3:
         return error("Word must be at least 3 letters")
 
     with STATE_LOCK:
-        if match_id_mismatch(requested_match_id, MATCH_STATE):
-            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
 
         if MATCH_STATE["status"] != "running":
@@ -444,11 +418,8 @@ def api_swipe_update():
     player = str(body.get("player", ""))
     if player not in {"1", "2"}:
         return error("Player must be '1' or '2'")
-    requested_match_id = requested_match_id_from_json(body)
 
     with STATE_LOCK:
-        if match_id_mismatch(requested_match_id, MATCH_STATE):
-            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
 
         if MATCH_STATE["status"] != "running":
@@ -469,11 +440,8 @@ def api_swipe_update():
 def api_state():
     view = request.args.get("view", "spectator")
     player = request.args.get("player")
-    requested_match_id = requested_match_id_from_query()
 
     with STATE_LOCK:
-        if match_id_mismatch(requested_match_id, MATCH_STATE):
-            return error("Match id mismatch", 409)
         update_match_status(MATCH_STATE)
         if view not in {"spectator", "player"}:
             return error("Invalid view")
