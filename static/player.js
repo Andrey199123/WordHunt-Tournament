@@ -545,6 +545,23 @@ async function ensureJoined() {
   }
 }
 
+async function adoptCurrentMatch() {
+  try {
+    const res = await fetch(`/api/state?view=player&player=${playerId}`);
+    const data = await res.json();
+    if (!data.ok) {
+      return false;
+    }
+
+    pinMatch(data.state.id);
+    applyState(data.state);
+    await ensureJoined();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function applyState(state) {
   if (!state || !state.id) {
     return;
@@ -613,8 +630,6 @@ function applyState(state) {
 }
 
 async function initialJoin() {
-  let canFallback = !queryMatchId;
-
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const body = { player: playerId };
     const matchId = activeMatchId();
@@ -635,16 +650,15 @@ async function initialJoin() {
       return true;
     }
 
-    if (data.error === "Match id mismatch" && canFallback) {
-      canFallback = false;
+    if (data.error === "Match id mismatch") {
       clearPinnedMatch();
+      const adopted = await adoptCurrentMatch();
+      if (adopted) {
+        setMessage(`Player ${playerId} synced`);
+        return true;
+      }
       await sleep(120);
       continue;
-    }
-
-    if (data.error === "Match id mismatch") {
-      setMessage("Out of sync. Tap Sync Player.", true);
-      return false;
     }
 
     setMessage(data.error || "Could not join", true);
@@ -686,16 +700,11 @@ async function syncPlayer() {
   renderHiddenBoard();
 
   try {
-    const res = await fetch(`/api/state?view=player&player=${playerId}`);
-    const data = await res.json();
-    if (!data.ok) {
-      setMessage(data.error || "Could not sync player", true);
+    const adopted = await adoptCurrentMatch();
+    if (!adopted) {
+      setMessage("Could not sync player", true);
       return;
     }
-
-    pinMatch(data.state.id);
-    applyState(data.state);
-    await ensureJoined();
     setMessage(`Player ${playerId} synced`);
   } catch {
     setMessage("Could not sync player", true);

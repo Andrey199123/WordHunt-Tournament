@@ -90,6 +90,34 @@ function updatePlayerLinks(matchId) {
   openPlayer2Link.href = `/play/2?match=${encodeURIComponent(matchId)}`;
 }
 
+async function openPlayerWithFreshMatch(playerId, event) {
+  if (event) {
+    event.preventDefault();
+  }
+
+  try {
+    const res = await fetch("/api/state?view=spectator");
+    const data = await res.json();
+    if (!data.ok) {
+      setMessage(data.error || "Could not sync player link", true);
+      return;
+    }
+
+    pinMatch(data.state.id);
+    currentMatchId = data.state.id;
+    applyState(data.state);
+
+    const url = `/play/${playerId}?match=${encodeURIComponent(data.state.id)}`;
+    if (event && (event.metaKey || event.ctrlKey || event.shiftKey)) {
+      window.open(url, "_blank", "noopener");
+      return;
+    }
+    window.open(url, "_blank", "noopener");
+  } catch {
+    setMessage("Could not sync player link", true);
+  }
+}
+
 function renderBoard(container, grid) {
   container.innerHTML = "";
   grid.forEach((row, r) => {
@@ -392,6 +420,9 @@ syncLiveButton.addEventListener("click", async () => {
   clearPinnedMatch();
   await fetchAndAdoptCurrentMatch();
 });
+
+openPlayer1Link.addEventListener("click", (event) => openPlayerWithFreshMatch("1", event));
+openPlayer2Link.addEventListener("click", (event) => openPlayerWithFreshMatch("2", event));
 
 window.addEventListener("resize", () => {
   if (!latestState) {
